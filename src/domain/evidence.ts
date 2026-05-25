@@ -18,13 +18,13 @@ export function createEvidenceIndex(events: SessionEvent[]): EvidenceRef[] {
 
 export function summarizeEvidenceType(type: EvidenceRef['type']): string {
   const labels: Record<EvidenceRef['type'], string> = {
-    'log-line': 'Log line',
-    'command-output': 'Command output',
-    'trace-slice': 'Trace slice',
-    screenshot: 'Screenshot',
-    screenrecord: 'Screen recording',
-    'script-step': 'Script step',
-    'artifact-file': 'Artifact file',
+    'log-line': '日志行',
+    'command-output': '命令输出',
+    'trace-slice': 'Trace 片段',
+    screenshot: '截图',
+    screenrecord: '录屏',
+    'script-step': '脚本步骤',
+    'artifact-file': '产物文件',
   };
   return labels[type];
 }

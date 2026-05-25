@@ -25,7 +25,7 @@ import type {
 type InvokeFn = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
 async function getTauriInvoke(): Promise<InvokeFn | null> {
-  if (!('__TAURI_INTERNALS__' in window)) {
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
     return null;
   }
 
@@ -42,7 +42,7 @@ async function callBackend<T>(command: string, args: Record<string, unknown> | u
   try {
     return await invoke<T>(command, args);
   } catch (error) {
-    console.warn(`Falling back after backend command failed: ${command}`, error);
+    console.warn(`后端命令失败，已切换到安全预览模式：${command}`, error);
     return fallback();
   }
 }
@@ -63,6 +63,7 @@ export const workbenchApi = {
       deviceId,
       createdAt: new Date().toISOString(),
       status: 'success',
+      summary: `已生成 ${recipeId} 诊断产物（预览模式）。`,
     })),
   runAgentPrompt: (prompt: string) =>
     callBackend<string>('run_agent_prompt', { prompt }, () =>
@@ -82,8 +83,8 @@ export const workbenchApi = {
         argv,
         status: requiresApproval ? 'blocked' : 'success',
         exitCode: requiresApproval ? undefined : 0,
-        stdout: requiresApproval ? '' : `Browser fallback queued command through the Command Gateway:\n${commandLine}`,
-        stderr: requiresApproval ? 'Command requires explicit local approval before execution.' : '',
+        stdout: requiresApproval ? '' : `浏览器预览模式已通过命令网关排队：\n${commandLine}`,
+        stderr: requiresApproval ? '该命令需要本地明确确认后才能执行。' : '',
         riskLevel: requiresApproval ? 'destructive' : 'read',
         requiresApproval,
         durationMs: 0,
@@ -94,7 +95,7 @@ export const workbenchApi = {
       id: `mirror-${Date.now()}`,
       deviceId,
       status: 'running',
-      message: 'Browser fallback mirror preview is active. Desktop runtime starts scrcpy when available.',
+      message: '浏览器预览镜像已启动。桌面运行时会在 scrcpy 可用时拉起真实镜像。',
       startedAt: new Date().toISOString(),
     })),
   createRemoteInvite: (permission: string) =>
@@ -117,13 +118,13 @@ export const workbenchApi = {
       tracker,
       status: 'dry-run',
       title,
-      payloadPreview: `Dry-run issue payload for ${tracker}: ${title}`,
+      payloadPreview: `缺陷提交预览（未联网提交）\n系统：${tracker}\n标题：${title}\n附件：artifact-crash-package`,
       attachments: ['artifact-crash-package'],
     })),
   getSelfDiagnostics: () =>
     callBackend<string[]>('self_diagnostics', undefined, () => [
-      'Frontend fallback adapter active',
-      'ADB path not verified in browser mode',
-      'scrcpy sidecar managed by Tauri when desktop runtime is available',
+      '前端预览适配器已启用',
+      '浏览器模式不直接校验 ADB 路径',
+      '桌面运行时可通过 Tauri 管理 scrcpy sidecar',
     ]),
 };

@@ -14,6 +14,13 @@ import type {
 } from '../domain';
 import { workbenchApi } from './api';
 
+const riskLabel: Record<'read' | 'write' | 'dangerous' | 'destructive', string> = {
+  read: '只读',
+  write: '写入',
+  dangerous: '高风险',
+  destructive: '破坏性',
+};
+
 export type WorkbenchView =
   | 'device'
   | 'mirror'
@@ -102,7 +109,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set({ artifacts: [artifact, ...get().artifacts], activeView: 'diagnostics' });
   },
   exportIssuePackage: async () => {
-    const issuePackage = await workbenchApi.exportIssuePackage(get().session?.title ?? 'Droid debug issue');
+    const issuePackage = await workbenchApi.exportIssuePackage(get().session?.title ?? 'Droid 调试问题');
     set({ issuePackage, activeView: 'session' });
   },
   askAgent: async (prompt) => {
@@ -115,8 +122,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const output = [
       `$ ${result.commandLine}`,
       result.status === 'blocked'
-        ? `blocked: ${result.riskLevel} command requires approval`
-        : result.stdout.trim() || result.stderr.trim() || `exit ${result.exitCode ?? 'n/a'}`,
+        ? `已拦截：${riskLabel[result.riskLevel]} 命令需要本地明确确认`
+        : result.stdout.trim() || result.stderr.trim() || `退出码 ${result.exitCode ?? 'n/a'}`,
     ].join('\n');
     set({ commandOutput: output });
     return output;
@@ -132,7 +139,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set({ remoteInvite, activeView: 'remote' });
   },
   submitIssue: async (tracker) => {
-    const issuePackage = get().issuePackage ?? (await workbenchApi.exportIssuePackage(get().session?.title ?? 'Droid debug issue'));
+    const issuePackage = get().issuePackage ?? (await workbenchApi.exportIssuePackage(get().session?.title ?? 'Droid 调试问题'));
     const integrationSubmission = await workbenchApi.submitIssue(tracker, issuePackage.title);
     set({ issuePackage, integrationSubmission, activeView: 'integrations' });
   },

@@ -470,7 +470,7 @@ fn run_process_with_timeout(argv: &[String], timeout: Duration) -> CommandExecut
                     status: "timeout".into(),
                     exit_code: None,
                     stdout: String::new(),
-                    stderr: format!("Command timed out after {} ms", timeout.as_millis()),
+                    stderr: format!("命令执行超过 {} ms，已自动终止", timeout.as_millis()),
                     risk_level: classify_command_risk(argv).into(),
                     requires_approval: false,
                     duration_ms: start.elapsed().as_millis(),
@@ -580,7 +580,7 @@ fn demo_events() -> Vec<SessionEvent> {
             timestamp: now(),
             kind: "user-action".into(),
             source: "local-user".into(),
-            title: "Started login reproduction".into(),
+            title: "开始复现登录崩溃".into(),
             evidence_refs: vec![EvidenceRef {
                 id: "ev-step-001".into(),
                 r#type: "script-step".into(),
@@ -589,7 +589,7 @@ fn demo_events() -> Vec<SessionEvent> {
                 timestamp: None,
                 line_range: None,
                 trace_time_range_ns: None,
-                description: Some("Tap Login from cold start".into()),
+                description: Some("冷启动后点击登录按钮".into()),
                 event_id: Some("evt-001".into()),
             }],
             payload: None,
@@ -599,7 +599,7 @@ fn demo_events() -> Vec<SessionEvent> {
             timestamp: now(),
             kind: "log-event".into(),
             source: "system".into(),
-            title: "FATAL EXCEPTION detected in com.example".into(),
+            title: "检测到 com.example 发生 FATAL EXCEPTION".into(),
             evidence_refs: vec![EvidenceRef {
                 id: "ev-log-001".into(),
                 r#type: "log-line".into(),
@@ -634,7 +634,7 @@ fn list_devices() -> Vec<DeviceRef> {
     vec![DeviceRef {
         id: "desktop-adb-001".into(),
         serial: "R58T-demo".into(),
-        alias: Some("ROM daily driver".into()),
+        alias: Some("ROM 测试主机".into()),
         transport: "adb-usb".into(),
         state: "device".into(),
         model: Some("Pixel 8 Pro".into()),
@@ -756,65 +756,65 @@ fn list_recipes() -> Vec<Recipe> {
     vec![
         recipe(
             "collect-logcat",
-            "One-click Logcat",
+            "一键 Logcat",
             "log",
             vec!["logcat"],
             vec![step(
                 "logcat-all",
                 "logcat",
-                "Capture logcat -b all",
+                "抓取全部 logcat buffer",
                 Some("logcat/all.txt"),
             )],
             output_policy.clone(),
         ),
         recipe(
             "collect-bugreport",
-            "One-click Bugreport",
+            "一键 Bugreport",
             "log",
             vec!["bugreport"],
             vec![step(
                 "bugreport",
                 "bugreport",
-                "Capture adb bugreport",
+                "抓取 adb bugreport",
                 Some("bugreport/"),
             )],
             output_policy.clone(),
         ),
         recipe(
             "collect-perfetto-trace",
-            "One-click Perfetto Trace",
+            "一键 Perfetto Trace",
             "trace",
             vec!["perfetto"],
             vec![step(
                 "perfetto",
                 "perfetto",
-                "Capture Perfetto trace",
+                "抓取 Perfetto trace",
                 Some("traces/main.perfetto-trace"),
             )],
             output_policy.clone(),
         ),
         recipe(
             "collect-issue-package",
-            "Issue Package",
+            "问题复现包",
             "custom",
             vec!["logcat", "screenshot"],
             vec![step(
                 "issue-create",
                 "createIssuePackage",
-                "Create issue package",
+                "生成问题复现包",
                 Some("issue-package.zip"),
             )],
             output_policy.clone(),
         ),
         recipe(
             "collect-regression-report",
-            "Regression Report",
+            "回归报告",
             "custom",
             vec!["adb", "screenshot"],
             vec![step(
                 "regression",
                 "runRegression",
-                "Run replay script as regression",
+                "按回放脚本执行回归",
                 Some("regression-report.json"),
             )],
             output_policy,
@@ -858,7 +858,7 @@ fn current_session() -> DebugSession {
         device_id: "desktop-adb-001".into(),
         started_at: now(),
         ended_at: None,
-        title: Some("Login crash reproduction".into()),
+        title: Some("登录崩溃复现".into()),
         events: demo_events(),
         artifacts: vec![],
         issue_package_id: None,
@@ -870,7 +870,7 @@ fn list_artifacts() -> Vec<DiagnosticArtifact> {
     vec![artifact(
         "artifact-crash-package",
         "collect-crash-package",
-        "Crash package captured with logcat, screenshot, and evidence index.",
+        "已生成包含 logcat、截图和证据索引的崩溃诊断包。",
     )]
 }
 
@@ -921,7 +921,9 @@ fn run_recipe(recipe_id: String, device_id: String) -> DiagnosticArtifact {
         | "collect-anr-package"
         | "collect-issue-package" => {
             let content = command_output("adb", &["-s", &adb_serial, "logcat", "-b", "all", "-d"])
-                .unwrap_or_else(|| "logcat unavailable; adb was not found or device is offline\nFATAL EXCEPTION demo marker\n".into());
+                .unwrap_or_else(|| {
+                    "logcat 不可用：未找到 adb 或设备离线\nFATAL EXCEPTION demo marker\n".into()
+                });
             files.push(write_artifact_file(&root, "logcat/all.txt", &content));
         }
         _ => {}
@@ -934,10 +936,8 @@ fn run_recipe(recipe_id: String, device_id: String) -> DiagnosticArtifact {
             | "collect-anr-package"
             | "collect-issue-package"
     ) {
-        let content =
-            command_output("adb", &["-s", &adb_serial, "bugreport"]).unwrap_or_else(|| {
-                "bugreport unavailable; adb was not found or device is offline\n".into()
-            });
+        let content = command_output("adb", &["-s", &adb_serial, "bugreport"])
+            .unwrap_or_else(|| "bugreport 不可用：未找到 adb 或设备离线\n".into());
         files.push(write_artifact_file(
             &root,
             "bugreport/bugreport.txt",
@@ -952,7 +952,7 @@ fn run_recipe(recipe_id: String, device_id: String) -> DiagnosticArtifact {
         files.push(write_artifact_file(
             &root,
             "traces/main.perfetto-trace",
-            "Perfetto capture placeholder. Configure perfetto path and trace config for real capture.\n",
+            "Perfetto 抓取占位文件：配置 perfetto 路径和 trace 配置后可执行真实抓取。\n",
         ));
     }
 
@@ -972,11 +972,7 @@ fn run_recipe(recipe_id: String, device_id: String) -> DiagnosticArtifact {
             "SurfaceFlinger",
         ] {
             let content = command_output("adb", &["-s", &adb_serial, "shell", "dumpsys", service])
-                .unwrap_or_else(|| {
-                    format!(
-                        "dumpsys {service} unavailable; adb was not found or device is offline\n"
-                    )
-                });
+                .unwrap_or_else(|| format!("dumpsys {service} 不可用：未找到 adb 或设备离线\n"));
             files.push(write_artifact_file(
                 &root,
                 &format!("dumpsys/{service}.txt"),
@@ -992,7 +988,7 @@ fn run_recipe(recipe_id: String, device_id: String) -> DiagnosticArtifact {
         files.push(write_artifact_file(
             &root,
             "screenshots/current.txt",
-            "Screenshot capture placeholder. Desktop runtime should replace this with adb exec-out screencap output when a device is online.\n",
+            "截图抓取占位文件：设备在线时桌面运行时会替换为 adb exec-out screencap 输出。\n",
         ));
     }
 
@@ -1025,7 +1021,7 @@ fn run_recipe(recipe_id: String, device_id: String) -> DiagnosticArtifact {
         status: "success".into(),
         root_dir: root.to_string_lossy().to_string(),
         files,
-        summary: Some("Recipe executed through the desktop Command Gateway and artifact directory was created.".into()),
+        summary: Some("Recipe 已通过桌面命令网关执行，并创建诊断产物目录。".into()),
         timeline: demo_events(),
     }
 }
@@ -1034,11 +1030,11 @@ fn run_recipe(recipe_id: String, device_id: String) -> DiagnosticArtifact {
 fn list_scripts() -> Vec<ReplayScript> {
     vec![ReplayScript {
         id: "script-login-crash".into(),
-        name: "Login crash reproduction".into(),
+        name: "登录崩溃复现".into(),
         created_at: now(),
         coordinate_space: serde_json::json!({ "width": 1080, "height": 2400, "rotation": 0 }),
         steps: vec![
-            serde_json::json!({ "id": "step-1", "type": "tap", "payload": { "x": 540, "y": 1960, "label": "Login button" }}),
+            serde_json::json!({ "id": "step-1", "type": "tap", "payload": { "x": 540, "y": 1960, "label": "登录按钮" }}),
             serde_json::json!({ "id": "step-2", "type": "assert", "payload": { "logContains": "FATAL EXCEPTION" }}),
         ],
     }]
@@ -1049,35 +1045,35 @@ fn list_agent_tools() -> Vec<AgentTool> {
     vec![
         agent_tool(
             "device.list",
-            "List connected devices.",
+            "列出已连接设备。",
             "read",
             "device.read",
             "list_devices",
         ),
         agent_tool(
             "logcat.capture",
-            "Capture logcat buffers.",
+            "抓取 logcat buffer。",
             "read",
             "diagnostic.run",
             "run_recipe",
         ),
         agent_tool(
             "issuePackage.create",
-            "Export an evidence-backed Issue Package.",
+            "导出带证据索引的问题包。",
             "read",
             "report.export",
             "export_issue_package",
         ),
         agent_tool(
             "symbolication.run",
-            "Run configured symbolication profiles.",
+            "运行已配置的符号化方案。",
             "read",
             "symbolication.run",
             "symbolication_run",
         ),
         agent_tool(
             "integration.submitIssue",
-            "Submit an issue preview to an external tracker.",
+            "生成外部缺陷系统提交预览。",
             "write",
             "integration.submit",
             "integration_submit_issue",
@@ -1132,10 +1128,10 @@ fn export_issue_package(title: String) -> IssuePackage {
         artifact_ids: vec!["artifact-crash-package".into()],
         evidence_index,
         agent_summary: Some(EvidenceBackedSummary {
-            conclusion: "LoginActivity crash is supported by logcat and command evidence.".into(),
+            conclusion: "LoginActivity 崩溃结论已有 logcat 和命令证据支撑。".into(),
             evidence_ids: vec!["ev-log-001".into(), "ev-step-001".into()],
-            actions_taken: vec!["Captured logcat".into(), "Created issue package".into()],
-            unverified_items: vec!["Network body not captured".into()],
+            actions_taken: vec!["已抓取 logcat".into(), "已创建问题包".into()],
+            unverified_items: vec!["尚未采集网络响应体".into()],
         }),
         redaction_status: "redacted".into(),
     }
@@ -1170,7 +1166,7 @@ fn execute_command(command_line: String, device_id: Option<String>) -> CommandEx
             status: "failed".into(),
             exit_code: None,
             stdout: String::new(),
-            stderr: "Command line is empty".into(),
+            stderr: "命令不能为空".into(),
             risk_level: "read".into(),
             requires_approval: false,
             duration_ms: 0,
@@ -1192,7 +1188,7 @@ fn execute_command(command_line: String, device_id: Option<String>) -> CommandEx
             status: "blocked".into(),
             exit_code: None,
             stdout: String::new(),
-            stderr: "Command requires explicit local approval before execution.".into(),
+            stderr: "该命令需要本地明确确认后才能执行。".into(),
             risk_level: risk_level.into(),
             requires_approval,
             duration_ms: start.elapsed().as_millis(),
@@ -1216,7 +1212,7 @@ fn start_mirror(device_id: String) -> MirrorSession {
             device_id,
             status: "unavailable".into(),
             pid: None,
-            message: "scrcpy was not found on PATH or sidecar configuration.".into(),
+            message: "未在 PATH 或 sidecar 配置中找到 scrcpy，无法启动真实镜像。".into(),
             started_at,
         };
     }
@@ -1240,7 +1236,7 @@ fn start_mirror(device_id: String) -> MirrorSession {
             device_id,
             status: "running".into(),
             pid: Some(child.id()),
-            message: "scrcpy mirror session started with reverse control enabled.".into(),
+            message: "scrcpy 镜像会话已启动，反控已启用。".into(),
             started_at,
         },
         Err(error) => MirrorSession {
@@ -1303,7 +1299,7 @@ fn integration_submit_issue(tracker: String, title: String) -> IntegrationSubmis
         status: "dry-run".into(),
         title: title.clone(),
         payload_preview: format!(
-            "Tracker: {tracker}\nTitle: [DroidDebug] {title}\nAttachments: artifact-crash-package\nRedaction: redacted\nMode: dry-run preview, no network submission without credentials"
+            "系统：{tracker}\n标题：[DroidDebug] {title}\n附件：artifact-crash-package\n脱敏：redacted\n模式：dry-run 预览，未配置凭据时不会联网提交"
         ),
         attachments: vec!["artifact-crash-package".into()],
     }
@@ -1319,11 +1315,11 @@ fn run_agent_prompt(prompt: String) -> String {
 #[tauri::command]
 fn self_diagnostics() -> Vec<String> {
     vec![
-        format!("adb available: {}", tool_exists("adb")),
-        format!("scrcpy available: {}", tool_exists("scrcpy")),
-        format!("perfetto available: {}", tool_exists("perfetto")),
-        "Tauri command gateway active".into(),
-        "Secrets are not included in self diagnostics".into(),
+        format!("ADB 可用：{}", tool_exists("adb")),
+        format!("scrcpy 可用：{}", tool_exists("scrcpy")),
+        format!("Perfetto 可用：{}", tool_exists("perfetto")),
+        "Tauri 命令网关已启用，自检通过基础通道。".into(),
+        "自检不会输出 API key、Token 或其他敏感信息。".into(),
     ]
 }
 
@@ -1357,7 +1353,7 @@ mod tests {
 
     #[test]
     fn issue_package_contains_evidence_index() {
-        let package = export_issue_package("Login crash".into());
+        let package = export_issue_package("登录崩溃".into());
         assert_eq!(package.schema_version, 1);
         assert!(!package.evidence_index.is_empty());
         assert_eq!(package.redaction_status, "redacted");

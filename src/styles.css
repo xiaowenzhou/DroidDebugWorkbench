@@ -1,9 +1,9 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #111315;
-  color: #e8ecef;
+    Inter, "Microsoft YaHei UI", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #f4f7fb;
+  color: #172033;
   font-synthesis: none;
   letter-spacing: 0;
   text-rendering: optimizeLegibility;
@@ -17,7 +17,7 @@ body {
   margin: 0;
   min-width: 1120px;
   min-height: 720px;
-  background: #111315;
+  background: #f4f7fb;
 }
 
 button,
@@ -27,9 +27,9 @@ textarea {
 }
 
 button {
-  border: 1px solid #394049;
-  background: #242a30;
-  color: #f5f7f9;
+  border: 1px solid #c9d5e4;
+  background: #ffffff;
+  color: #1d2a3d;
   border-radius: 6px;
   min-height: 34px;
   padding: 0 12px;
@@ -38,15 +38,17 @@ button {
   justify-content: center;
   gap: 8px;
   cursor: pointer;
+  box-shadow: 0 1px 1px rgb(15 23 42 / 0.04);
 }
 
 button:hover:not(:disabled) {
-  border-color: #71a7ff;
-  background: #2d3540;
+  border-color: #2f7fe8;
+  background: #f3f8ff;
 }
 
 button:disabled {
-  color: #8c96a3;
+  color: #8b98aa;
+  background: #f2f5f9;
   cursor: not-allowed;
 }
 
@@ -54,12 +56,12 @@ button:disabled {
   display: grid;
   grid-template-columns: 220px 1fr;
   min-height: 100vh;
-  background: #111315;
+  background: #f4f7fb;
 }
 
 .sidebar {
-  border-right: 1px solid #2b3138;
-  background: #171a1f;
+  border-right: 1px solid #d6deea;
+  background: #ffffff;
   padding: 16px 12px;
 }
 
@@ -76,16 +78,20 @@ button:disabled {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: #2b6eea;
+  background: #1f6feb;
   color: white;
   font-weight: 800;
+}
+
+.brand strong {
+  color: #101828;
 }
 
 .brand span,
 small,
 .panel-header p {
   display: block;
-  color: #9da7b3;
+  color: #66758a;
 }
 
 .nav-list {
@@ -98,13 +104,15 @@ small,
   justify-content: flex-start;
   background: transparent;
   border-color: transparent;
-  color: #b8c0ca;
+  color: #405068;
+  box-shadow: none;
 }
 
 .nav-item.active {
-  background: #263241;
-  border-color: #355174;
-  color: #ffffff;
+  background: #eaf3ff;
+  border-color: #b9d7ff;
+  color: #0f55b5;
+  font-weight: 700;
 }
 
 .main {
@@ -120,14 +128,14 @@ small,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid #2b3138;
+  border-bottom: 1px solid #d6deea;
   padding: 0 18px;
-  background: #181c21;
-  color: #c6ccd4;
+  background: #ffffff;
+  color: #47566d;
 }
 
 .task-bar {
-  border-top: 1px solid #2b3138;
+  border-top: 1px solid #d6deea;
   border-bottom: 0;
   justify-content: flex-start;
   font-size: 12px;
@@ -146,29 +154,31 @@ small,
 }
 
 .status-pill {
-  border: 1px solid #343b44;
+  border: 1px solid #d3dce9;
   border-radius: 999px;
   padding: 5px 9px;
-  background: #20252b;
+  background: #f7f9fc;
 }
 
 .status-pill.strong {
-  color: white;
+  color: #111827;
+  background: #eef6ff;
+  border-color: #bfdbfe;
 }
 
 .status-dot {
   width: 9px;
   height: 9px;
   border-radius: 999px;
-  background: #d9a441;
+  background: #d89520;
 }
 
 .status-dot.ok {
-  background: #4cc38a;
+  background: #12a36d;
 }
 
 .status-dot.warn {
-  background: #d9a441;
+  background: #d89520;
 }
 
 .workspace {
@@ -181,21 +191,21 @@ small,
 .context-panel {
   min-height: 0;
   overflow: auto;
-  background: #15191e;
-  border-right: 1px solid #2b3138;
+  background: #f9fbfe;
+  border-right: 1px solid #d6deea;
   padding: 14px;
 }
 
 .context-panel {
   border-right: 0;
-  border-left: 1px solid #2b3138;
+  border-left: 1px solid #d6deea;
 }
 
 .rail-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #c8d0d9;
+  color: #253349;
   margin-bottom: 10px;
   font-weight: 700;
 }
@@ -209,6 +219,7 @@ small,
   margin-bottom: 8px;
   min-height: 62px;
   align-items: center;
+  background: #ffffff;
 }
 
 .device-tile small {
@@ -216,14 +227,14 @@ small,
 }
 
 .device-tile.selected {
-  border-color: #71a7ff;
-  background: #263241;
+  border-color: #2f7fe8;
+  background: #edf6ff;
 }
 
 .ghost-action {
   width: 100%;
   margin-top: 8px;
-  background: transparent;
+  background: #f9fbfe;
 }
 
 .workbench-panel {
@@ -231,7 +242,7 @@ small,
   min-height: 0;
   overflow: auto;
   padding: 18px;
-  background: #111315;
+  background: #f4f7fb;
 }
 
 .panel-header {
@@ -246,6 +257,7 @@ small,
   font-size: 24px;
   line-height: 1.2;
   margin: 3px 0 0;
+  color: #111827;
 }
 
 .panel-header p {
@@ -268,40 +280,40 @@ small,
 }
 
 .metric {
-  border: 1px solid #303740;
+  border: 1px solid #d8e1ee;
   border-radius: 8px;
-  background: #181d22;
+  background: #ffffff;
   padding: 12px;
   min-height: 76px;
 }
 
 .metric span {
-  color: #9da7b3;
+  color: #66758a;
   font-size: 12px;
 }
 
 .metric strong {
   display: block;
   margin-top: 8px;
-  color: #f4f7fa;
+  color: #172033;
   word-break: break-word;
 }
 
 .metric.ok strong {
-  color: #6ee0a3;
+  color: #08734f;
 }
 
 .metric.warn strong {
-  color: #f0bd56;
+  color: #9a6700;
 }
 
 .band,
 .info-list,
 .tool-card,
 .wide-row {
-  border: 1px solid #303740;
+  border: 1px solid #d8e1ee;
   border-radius: 8px;
-  background: #181d22;
+  background: #ffffff;
   padding: 14px;
   margin-bottom: 14px;
 }
@@ -311,6 +323,7 @@ small,
 .context-section h3 {
   margin: 0 0 10px;
   font-size: 14px;
+  color: #172033;
 }
 
 .chip-row {
@@ -326,8 +339,9 @@ small,
   align-items: center;
   min-height: 24px;
   border-radius: 999px;
-  border: 1px solid #3a424b;
-  color: #c7d0dc;
+  border: 1px solid #cfd9e8;
+  background: #f8fafc;
+  color: #47566d;
   padding: 2px 8px;
   font-size: 12px;
 }
@@ -335,18 +349,15 @@ small,
 .badge.success,
 .badge.successful,
 .badge.ok {
-  border-color: #2f7f5d;
-  color: #72dda8;
+  border-color: #9bd8bd;
+  color: #08734f;
+  background: #eefaf4;
 }
 
 .badge.warning {
-  border-color: #8a6a2d;
-  color: #f0bd56;
-}
-
-.badge.success,
-.badge.running {
-  text-transform: uppercase;
+  border-color: #e8ce8a;
+  color: #9a6700;
+  background: #fff8df;
 }
 
 .split {
@@ -358,7 +369,7 @@ small,
 .info-list ul {
   margin: 0;
   padding-left: 18px;
-  color: #c7d0dc;
+  color: #405068;
 }
 
 .info-list li + li {
@@ -376,19 +387,19 @@ small,
   width: 100%;
   aspect-ratio: 9 / 19.5;
   max-height: 660px;
-  border: 8px solid #070809;
+  border: 8px solid #172033;
   border-radius: 28px;
-  background: #202c36;
+  background: #f8fbff;
   overflow: hidden;
   display: grid;
   grid-template-rows: 42px 1fr 42px;
-  box-shadow: 0 24px 40px rgb(0 0 0 / 0.25);
+  box-shadow: 0 18px 36px rgb(15 23 42 / 0.16);
 }
 
 .phone-status,
 .phone-nav {
-  background: #10161c;
-  color: #d9e2ec;
+  background: #e9eff7;
+  color: #2c3a4f;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -400,13 +411,14 @@ small,
   place-items: center;
   align-content: center;
   gap: 12px;
+  background: #ffffff;
 }
 
 .phone-avatar {
   width: 72px;
   height: 72px;
   border-radius: 20px;
-  background: #2b6eea;
+  background: #1f6feb;
 }
 
 .mirror-controls {
@@ -422,17 +434,18 @@ small,
 }
 
 .tab.active {
-  color: #71a7ff;
-  border-color: #436c9f;
+  color: #0f55b5;
+  border-color: #9bc6ff;
+  background: #edf6ff;
 }
 
 .terminal-output,
 .agent-chat pre {
   margin: 0 0 10px;
-  border: 1px solid #303740;
+  border: 1px solid #cfd9e8;
   border-radius: 8px;
-  background: #080a0d;
-  color: #b7f7cb;
+  background: #172033;
+  color: #d8ffe8;
   min-height: 310px;
   padding: 14px;
   overflow: auto;
@@ -453,10 +466,10 @@ small,
 .terminal-input input,
 .agent-chat textarea {
   width: 100%;
-  border: 1px solid #303740;
+  border: 1px solid #cfd9e8;
   border-radius: 6px;
-  color: #f5f7fa;
-  background: #181d22;
+  color: #172033;
+  background: #ffffff;
   padding: 10px;
 }
 
@@ -487,7 +500,7 @@ small,
 
 .tool-card p {
   margin: 0;
-  color: #aeb8c5;
+  color: #66758a;
   font-size: 13px;
 }
 
@@ -500,7 +513,7 @@ small,
 
 .artifact-row {
   justify-content: space-between;
-  border-bottom: 1px solid #2d333b;
+  border-bottom: 1px solid #e2e8f0;
   padding: 10px 0;
 }
 
@@ -528,7 +541,7 @@ small,
   width: 11px;
   height: 11px;
   border-radius: 999px;
-  background: #71a7ff;
+  background: #1f6feb;
   margin-top: 5px;
 }
 

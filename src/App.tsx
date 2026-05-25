@@ -1,29 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Activity,
   Bot,
-  Boxes,
   Braces,
-  Bug,
   Cable,
   CheckCircle2,
-  ClipboardList,
-  Code2,
   Cpu,
-  Database,
   Download,
   FileArchive,
   Gauge,
   GitBranch,
-  HardDrive,
-  KeyRound,
   ListChecks,
   MonitorSmartphone,
-  Network,
   Package,
   Play,
   Radio,
-  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
@@ -32,37 +23,35 @@ import {
   Timer,
   UploadCloud,
   Wifi,
-  Zap,
 } from 'lucide-react';
 import type { DebugRecipe, DeviceRef, SessionEvent } from './domain';
 import { isRecipeAllowedForDevice, summarizeEvidenceType } from './domain';
 import { useWorkbenchStore, type WorkbenchView } from './app/store';
 
 const navItems: Array<{ id: WorkbenchView; label: string; icon: typeof Smartphone }> = [
-  { id: 'device', label: 'Devices', icon: Smartphone },
-  { id: 'mirror', label: 'Mirror', icon: MonitorSmartphone },
-  { id: 'terminal', label: 'Terminal', icon: TerminalSquare },
-  { id: 'diagnostics', label: 'Diagnostics', icon: Activity },
-  { id: 'scripts', label: 'Scripts', icon: Play },
-  { id: 'session', label: 'Session', icon: FileArchive },
+  { id: 'device', label: '设备', icon: Smartphone },
+  { id: 'mirror', label: '镜像', icon: MonitorSmartphone },
+  { id: 'terminal', label: '终端', icon: TerminalSquare },
+  { id: 'diagnostics', label: '诊断', icon: Activity },
+  { id: 'scripts', label: '脚本', icon: Play },
+  { id: 'session', label: '会话', icon: FileArchive },
   { id: 'ai', label: 'Agent', icon: Bot },
-  { id: 'remote', label: 'Remote', icon: Radio },
-  { id: 'packages', label: 'Packages', icon: Package },
+  { id: 'remote', label: '远程', icon: Radio },
+  { id: 'packages', label: '应用', icon: Package },
   { id: 'rom', label: 'ROM', icon: Cpu },
-  { id: 'integrations', label: 'Integrations', icon: UploadCloud },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'integrations', label: '集成', icon: UploadCloud },
+  { id: 'settings', label: '设置', icon: Settings },
 ];
 
+const riskLabel = {
+  read: '只读',
+  write: '写入',
+  dangerous: '高风险',
+  destructive: '破坏性',
+} as const;
+
 export function App() {
-  const {
-    activeView,
-    devices,
-    selectedDeviceId,
-    loading,
-    setActiveView,
-    selectDevice,
-    bootstrap,
-  } = useWorkbenchStore();
+  const { activeView, devices, selectedDeviceId, loading, setActiveView, selectDevice, bootstrap } = useWorkbenchStore();
 
   useEffect(() => {
     void bootstrap();
@@ -76,12 +65,12 @@ export function App() {
         <div className="brand">
           <div className="brand-mark">DD</div>
           <div>
-            <strong>Droid Debug</strong>
-            <span>Workbench</span>
+            <strong>安卓调试工作台</strong>
+            <span>Droid Debug Workbench</span>
           </div>
         </div>
 
-        <nav className="nav-list" aria-label="Primary">
+        <nav className="nav-list" aria-label="主导航">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -149,21 +138,21 @@ function DeviceStatusBar({ device, loading }: { device?: DeviceRef; loading: boo
       <div className="status-cluster">
         <span className="status-pill strong">
           <Smartphone size={15} />
-          {device?.alias ?? device?.model ?? 'No device'}
+          {device?.alias ?? device?.model ?? '未选择设备'}
         </span>
         <span className={`status-dot ${device?.state === 'device' ? 'ok' : 'warn'}`} />
-        <span>{device?.transport ?? 'transport unknown'}</span>
-        <span>{device?.androidVersion ? `Android ${device.androidVersion}` : 'Android unknown'}</span>
-        <span>{device?.rootState ?? 'root unknown'}</span>
+        <span>{device?.transport ?? '连接未知'}</span>
+        <span>{device?.androidVersion ? `Android ${device.androidVersion}` : '系统版本未知'}</span>
+        <span>{device?.rootState ?? 'root 未知'}</span>
       </div>
       <div className="status-cluster right">
         <span className="status-pill">
           <ShieldCheck size={15} />
-          Evidence mode
+          证据模式
         </span>
         <span className="status-pill">
           <Timer size={15} />
-          {loading ? 'Loading' : 'Session live'}
+          {loading ? '加载中' : '会话运行中'}
         </span>
       </div>
     </header>
@@ -183,7 +172,7 @@ function DeviceRail({
     <aside className="device-rail">
       <div className="rail-title">
         <Cable size={16} />
-        Devices
+        设备列表
       </div>
       {devices.map((device) => (
         <button key={device.id} className={selectedDeviceId === device.id ? 'device-tile selected' : 'device-tile'} onClick={() => onSelect(device.id)}>
@@ -194,7 +183,7 @@ function DeviceRail({
       ))}
       <button className="ghost-action">
         <Wifi size={16} />
-        Pair Wi-Fi
+        配对无线调试
       </button>
     </aside>
   );
@@ -205,32 +194,32 @@ function DeviceView({ device }: { device?: DeviceRef }) {
   const profile = device?.profile;
   return (
     <WorkbenchPanel
-      title="Device Hub"
-      kicker="ADB, serial, fastboot, recovery, and capability profile"
+      title="设备工作台"
+      kicker="统一管理 ADB、无线 ADB、串口、fastboot、recovery 与能力画像"
       actions={
         <>
           <button onClick={() => setActiveView('terminal')}>
             <TerminalSquare size={16} />
-            Shell
+            打开终端
           </button>
           <button onClick={() => runRecipe('collect-logcat')}>
             <Download size={16} />
-            Logcat
+            抓取日志
           </button>
         </>
       }
     >
       <div className="metric-grid">
-        <Metric label="Serial" value={device?.serial ?? 'none'} />
-        <Metric label="State" value={device?.state ?? 'unknown'} tone={device?.state === 'device' ? 'ok' : 'warn'} />
-        <Metric label="Screen" value={profile?.screen ? `${profile.screen.width}x${profile.screen.height} @ ${profile.screen.refreshRate ?? '?'}Hz` : 'unknown'} />
-        <Metric label="SELinux" value={profile?.selinux ?? 'unknown'} />
-        <Metric label="ADB" value={device?.capabilities.includes('adb') ? 'ready' : 'missing'} tone={device?.capabilities.includes('adb') ? 'ok' : 'warn'} />
-        <Metric label="Perfetto" value={profile?.perfetto.available ? 'available' : 'missing'} tone={profile?.perfetto.available ? 'ok' : 'warn'} />
+        <Metric label="序列号" value={device?.serial ?? '无'} />
+        <Metric label="状态" value={device?.state ?? '未知'} tone={device?.state === 'device' ? 'ok' : 'warn'} />
+        <Metric label="屏幕" value={profile?.screen ? `${profile.screen.width}x${profile.screen.height} @ ${profile.screen.refreshRate ?? '?'}Hz` : '未知'} />
+        <Metric label="SELinux" value={profile?.selinux ?? '未知'} />
+        <Metric label="ADB" value={device?.capabilities.includes('adb') ? '可用' : '缺失'} tone={device?.capabilities.includes('adb') ? 'ok' : 'warn'} />
+        <Metric label="Perfetto" value={profile?.perfetto.available ? '可用' : '缺失'} tone={profile?.perfetto.available ? 'ok' : 'warn'} />
       </div>
 
       <section className="band">
-        <h3>Capability Profile</h3>
+        <h3>能力画像</h3>
         <div className="chip-row">
           {(device?.capabilities ?? []).map((capability) => (
             <span className="chip" key={capability}>
@@ -241,24 +230,10 @@ function DeviceView({ device }: { device?: DeviceRef }) {
       </section>
 
       <section className="split">
+        <InfoList title="连接操作" items={['重启 ADB server', '配对无线调试', '管理 forward/reverse 端口', '打开 fastboot 模板', '检查串口参数']} />
         <InfoList
-          title="Connection Actions"
-          items={[
-            'Restart ADB server',
-            'Pair wireless debugging',
-            'Manage forward/reverse ports',
-            'Open fastboot command templates',
-            'Inspect serial COM configuration',
-          ]}
-        />
-        <InfoList
-          title="Profile Driven Decisions"
-          items={[
-            'Recipes check capabilities before running',
-            'scrcpy and Perfetto expose version-specific availability',
-            'Issue Packages capture build fingerprint and tool status',
-            'High-risk commands require approval',
-          ]}
+          title="工作流策略"
+          items={['Recipe 运行前校验设备能力', 'scrcpy 与 Perfetto 展示版本能力', 'Issue Package 记录构建指纹和工具状态', '高风险命令必须本地确认']}
         />
       </section>
     </WorkbenchPanel>
@@ -269,43 +244,40 @@ function MirrorView({ device }: { device?: DeviceRef }) {
   const { setActiveView, startMirror, mirrorSession } = useWorkbenchStore();
   return (
     <WorkbenchPanel
-      title="Mirror Hub"
-      kicker="scrcpy-managed device mirror, reverse control, screenshots, and script recording"
+      title="镜像与反控"
+      kicker="通过 scrcpy 管理设备镜像、反控、截图与脚本录制"
       actions={
         <>
           <button onClick={startMirror}>
             <MonitorSmartphone size={16} />
-            Start Mirror
+            启动镜像
           </button>
           <button onClick={() => setActiveView('scripts')}>
             <Play size={16} />
-            Record
+            录制脚本
           </button>
         </>
       }
     >
       <div className="mirror-layout">
-        <div className="phone-preview" aria-label="Android mirror preview">
+        <div className="phone-preview" aria-label="Android 镜像预览">
           <div className="phone-status">12:45  5G  84%</div>
           <div className="phone-app">
             <span className="phone-avatar" />
-            <strong>LoginActivity</strong>
-            <small>{device?.model ?? 'No active device'}</small>
-            <button>Sign in</button>
+            <strong>登录页</strong>
+            <small>{device?.model ?? '无活动设备'}</small>
+            <button>登录</button>
           </div>
           <div className="phone-nav" />
         </div>
         <div className="mirror-controls">
-          <Metric label="Mode" value="control enabled" tone="ok" />
-          <Metric label="Session" value={mirrorSession?.status ?? 'not started'} tone={mirrorSession?.status === 'running' ? 'ok' : undefined} />
-          <Metric label="Record" value="ready" />
-          <Metric label="Clipboard" value="sync enabled" />
-          <Metric label="Audio" value={device?.profile?.scrcpy.audio ? 'available' : 'unavailable'} />
+          <Metric label="控制模式" value="已允许反控" tone="ok" />
+          <Metric label="镜像会话" value={mirrorSession?.status ?? '未启动'} tone={mirrorSession?.status === 'running' ? 'ok' : undefined} />
+          <Metric label="录制" value="就绪" />
+          <Metric label="剪贴板" value="同步开启" />
+          <Metric label="音频" value={device?.profile?.scrcpy.audio ? '可用' : '不可用'} />
           {mirrorSession && <small>{mirrorSession.message}</small>}
-          <InfoList
-            title="scrcpy Template"
-            items={['max-size 1600', 'bitrate 8M', 'max-fps 60', 'stay-awake', 'turn-screen-off supported']}
-          />
+          <InfoList title="scrcpy 参数模板" items={['max-size 1600', 'bitrate 8M', 'max-fps 60', 'stay-awake', 'turn-screen-off 支持']} />
         </div>
       </div>
     </WorkbenchPanel>
@@ -323,7 +295,7 @@ function TerminalView({ device }: { device?: DeviceRef }) {
   const [command, setCommand] = useState('adb shell dumpsys activity top');
 
   return (
-    <WorkbenchPanel title="Terminal Hub" kicker="Local shell, adb shell, serial console, and fastboot sessions">
+    <WorkbenchPanel title="终端中心" kicker="本地命令、ADB shell、串口控制台和 fastboot 会话统一入口">
       <div className="terminal-tabs">
         <span className="tab active">adb shell</span>
         <span className="tab">logcat</span>
@@ -343,10 +315,10 @@ function TerminalView({ device }: { device?: DeviceRef }) {
           });
         }}
       >
-        <input value={command} onChange={(event) => setCommand(event.target.value)} aria-label="Terminal command" />
+        <input value={command} onChange={(event) => setCommand(event.target.value)} aria-label="终端命令" />
         <button>
           <TerminalSquare size={16} />
-          Run
+          执行
         </button>
       </form>
     </WorkbenchPanel>
@@ -356,14 +328,14 @@ function TerminalView({ device }: { device?: DeviceRef }) {
 function DiagnosticsView({ device }: { device?: DeviceRef }) {
   const { recipes, artifacts, runRecipe } = useWorkbenchStore();
   return (
-    <WorkbenchPanel title="Diagnostic Hub" kicker="One-click logcat, bugreport, Perfetto, screenshots, and custom Recipes">
+    <WorkbenchPanel title="诊断中心" kicker="一键 logcat、bugreport、Perfetto、截图和自定义 Recipe">
       <div className="recipe-grid">
         {recipes.map((recipe) => (
           <RecipeCard key={recipe.id} recipe={recipe} device={device} onRun={() => runRecipe(recipe.id)} />
         ))}
       </div>
       <section className="band">
-        <h3>Recent Artifacts</h3>
+        <h3>最近产物</h3>
         <div className="artifact-list">
           {artifacts.map((artifact) => (
             <div className="artifact-row" key={artifact.id}>
@@ -397,9 +369,9 @@ function RecipeCard({ recipe, device, onRun }: { recipe: DebugRecipe; device?: D
           </span>
         ))}
       </div>
-      <button disabled={!availability.allowed} onClick={onRun} title={availability.allowed ? 'Run recipe' : availability.missingCapabilities.join(', ')}>
+      <button disabled={!availability.allowed} onClick={onRun} title={availability.allowed ? '运行 Recipe' : availability.missingCapabilities.join(', ')}>
         <Play size={16} />
-        {availability.allowed ? 'Run' : 'Missing capability'}
+        {availability.allowed ? '运行' : '能力缺失'}
       </button>
     </article>
   );
@@ -409,12 +381,12 @@ function ScriptsView() {
   const { scripts, runRecipe } = useWorkbenchStore();
   return (
     <WorkbenchPanel
-      title="Script Hub"
-      kicker="Record mirror gestures, terminal commands, waits, assertions, and regression runs"
+      title="脚本与回放"
+      kicker="录制镜像手势、终端命令、等待、断言，并生成回归报告"
       actions={
         <button onClick={() => runRecipe('collect-regression-report')}>
           <ListChecks size={16} />
-          Regression
+          回归执行
         </button>
       }
     >
@@ -425,17 +397,14 @@ function ScriptsView() {
             <div>
               <strong>{script.name}</strong>
               <small>
-                {script.steps.length} steps, base {script.coordinateSpace.width}x{script.coordinateSpace.height}
+                {script.steps.length} 步，基准分辨率 {script.coordinateSpace.width}x{script.coordinateSpace.height}
               </small>
             </div>
-            <span className="badge success">ready</span>
+            <span className="badge success">就绪</span>
           </article>
         ))}
       </div>
-      <InfoList
-        title="Replay Strategy"
-        items={['UIAutomator selector first', 'Coordinate fallback', 'Evidence on failure', 'Regression report with screenshot and log window']}
-      />
+      <InfoList title="回放策略" items={['优先 UIAutomator selector', '坐标兜底', '失败时保留证据', '回归报告关联截图和日志窗口']} />
     </WorkbenchPanel>
   );
 }
@@ -445,12 +414,12 @@ function SessionView() {
   const events = session?.events ?? [];
   return (
     <WorkbenchPanel
-      title="Session & Report Hub"
-      kicker="Debug Session timeline, EvidenceRef index, Issue Package export/import, and regression reports"
+      title="会话与问题包"
+      kicker="Debug Session 时间线、EvidenceRef 索引、Issue Package 导出和回归结果"
       actions={
         <button onClick={exportIssuePackage}>
           <FileArchive size={16} />
-          Export Issue Package
+          导出问题包
         </button>
       }
     >
@@ -460,8 +429,8 @@ function SessionView() {
           <h3>Issue Package</h3>
           <div className="metric-grid">
             <Metric label="ID" value={issuePackage.id} />
-            <Metric label="Evidence" value={`${issuePackage.evidenceIndex.length} refs`} />
-            <Metric label="Redaction" value={issuePackage.redactionStatus} tone="ok" />
+            <Metric label="证据" value={`${issuePackage.evidenceIndex.length} 条`} />
+            <Metric label="脱敏" value={issuePackage.redactionStatus} tone="ok" />
             <Metric label="Schema" value={`v${issuePackage.schemaVersion}`} />
           </div>
         </section>
@@ -497,9 +466,9 @@ function Timeline({ events }: { events: SessionEvent[] }) {
 
 function AgentView() {
   const { agentTools, agentOutput, askAgent } = useWorkbenchStore();
-  const [prompt, setPrompt] = useState('Analyze the current crash and create an evidence-backed summary.');
+  const [prompt, setPrompt] = useState('请分析当前崩溃，并输出带证据引用的结论。');
   return (
-    <WorkbenchPanel title="AI Agent Hub" kicker="Provider-style chat, tool registry, evidence mode, and approval policy">
+    <WorkbenchPanel title="AI Agent 助手" kicker="OpenAI-compatible Provider、工具注册表、证据模式和审批策略">
       <div className="agent-layout">
         <form
           className="agent-chat"
@@ -508,19 +477,19 @@ function AgentView() {
             void askAgent(prompt);
           }}
         >
-          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} aria-label="Agent 提示词" />
           <button>
             <Bot size={16} />
-            Ask Agent
+            询问 Agent
           </button>
-          <pre>{agentOutput || 'Agent answers will include conclusion, evidence, actions taken, and unverified items.'}</pre>
+          <pre>{agentOutput || 'Agent 回答会包含：结论、证据、已执行动作和未验证项。'}</pre>
         </form>
         <div className="tool-list">
           {agentTools.map((tool) => (
             <article className="tool-card compact" key={tool.name}>
               <strong>{tool.name}</strong>
               <small>{tool.description}</small>
-              <span className={`badge ${tool.riskLevel === 'read' ? 'success' : 'warning'}`}>{tool.riskLevel}</span>
+              <span className={`badge ${tool.riskLevel === 'read' ? 'success' : 'warning'}`}>{riskLabel[tool.riskLevel]}</span>
             </article>
           ))}
         </div>
@@ -533,44 +502,35 @@ function RemoteView() {
   const { remoteInvite, createRemoteInvite } = useWorkbenchStore();
   return (
     <WorkbenchPanel
-      title="Remote Hub"
-      kicker="LAN invite, scoped mirror and terminal control, audit-first collaboration"
+      title="局域网远程协作"
+      kicker="生成 LAN 邀请，按权限开放镜像、终端和诊断操作，并记录审计"
       actions={
         <button onClick={() => createRemoteInvite('mirror-control')}>
           <Radio size={16} />
-          Create Invite
+          创建邀请
         </button>
       }
     >
       <div className="metric-grid">
-        <Metric label="Mode" value="LAN invite" />
-        <Metric label="Invite" value={remoteInvite?.code ?? 'not created'} tone={remoteInvite ? 'ok' : undefined} />
-        <Metric label="Permission" value={remoteInvite?.permission ?? 'viewer'} />
-        <Metric label="Audit" value={remoteInvite?.auditEnabled ? 'enabled' : 'ready'} tone="ok" />
-        <Metric label="Expires" value={remoteInvite ? new Date(remoteInvite.expiresAt).toLocaleTimeString() : '15 minutes'} />
+        <Metric label="模式" value="LAN 邀请" />
+        <Metric label="邀请码" value={remoteInvite?.code ?? '未创建'} tone={remoteInvite ? 'ok' : undefined} />
+        <Metric label="权限" value={remoteInvite?.permission ?? 'viewer'} />
+        <Metric label="审计" value={remoteInvite?.auditEnabled ? '已启用' : '就绪'} tone="ok" />
+        <Metric label="过期时间" value={remoteInvite ? new Date(remoteInvite.expiresAt).toLocaleTimeString() : '15 分钟'} />
       </div>
-      <InfoList
-        title="Permission Levels"
-        items={['viewer', 'mirror-control', 'terminal-read', 'terminal-control', 'diagnostic-runner', 'admin with local confirmation']}
-      />
+      <InfoList title="权限级别" items={['viewer', 'mirror-control', 'terminal-read', 'terminal-control', 'diagnostic-runner', 'admin 需要本地确认']} />
     </WorkbenchPanel>
   );
 }
 
 function PackageView({ device }: { device?: DeviceRef }) {
   return (
-    <WorkbenchPanel title="Package & App Inspection" kicker="APK/AAB install, package state, app data, database, preferences, and network clues">
+    <WorkbenchPanel title="应用与包检查" kicker="APK/AAB 安装、包状态、应用数据、数据库、偏好和网络线索">
       <section className="split">
-        <InfoList title="Package Actions" items={['Install APK', 'Install split APK', 'Downgrade install with approval', 'Runtime permissions', 'AppOps']} />
+        <InfoList title="包操作" items={['安装 APK', '安装 split APK', '降级安装需确认', '运行时权限', 'AppOps']} />
         <InfoList
-          title="Inspection"
-          items={[
-            'Database export for debuggable apps',
-            'SharedPreferences viewer',
-            'Background task state',
-            'Network request clues',
-            `Active package target: ${device?.model ?? 'none'}`,
-          ]}
+          title="应用检查"
+          items={['导出 debuggable 应用数据库', 'SharedPreferences 查看器', '后台任务状态', '网络请求线索', `当前目标：${device?.model ?? '无'}`]}
         />
       </section>
     </WorkbenchPanel>
@@ -581,25 +541,22 @@ function RomView({ device }: { device?: DeviceRef }) {
   const { runSymbolication, symbolicationResult } = useWorkbenchStore();
   return (
     <WorkbenchPanel
-      title="ROM Hub"
-      kicker="fastboot, SELinux, tombstones, kernel logs, Winscope, and symbolication"
+      title="ROM 调试"
+      kicker="fastboot、SELinux、tombstone、kernel log、Winscope 和符号化"
       actions={
         <button onClick={runSymbolication}>
           <Braces size={16} />
-          Symbolicate
+          符号化
         </button>
       }
     >
       <div className="metric-grid">
-        <Metric label="SELinux" value={device?.profile?.selinux ?? 'unknown'} />
-        <Metric label="Root" value={device?.rootState ?? 'unknown'} />
-        <Metric label="Partitions" value={`${device?.profile?.partitions?.length ?? 0}`} />
-        <Metric label="Symbolication" value="profiles ready" />
+        <Metric label="SELinux" value={device?.profile?.selinux ?? '未知'} />
+        <Metric label="Root" value={device?.rootState ?? '未知'} />
+        <Metric label="分区数" value={`${device?.profile?.partitions?.length ?? 0}`} />
+        <Metric label="符号化" value="配置就绪" />
       </div>
-      <InfoList
-        title="ROM Diagnostics"
-        items={['AVC denied aggregation', 'tombstone parsing', 'vmlinux/System.map profiles', 'Winscope capture entry', 'CTS/GTS/Tradefed templates']}
-      />
+      <InfoList title="ROM 诊断" items={['AVC denied 聚合', 'tombstone 解析', 'vmlinux/System.map 配置', 'Winscope 抓取入口', 'CTS/GTS/Tradefed 模板']} />
       {symbolicationResult && <pre className="terminal-output compact-output">{symbolicationResult.output}</pre>}
     </WorkbenchPanel>
   );
@@ -608,16 +565,16 @@ function RomView({ device }: { device?: DeviceRef }) {
 function IntegrationsView() {
   const { integrationSubmission, submitIssue } = useWorkbenchStore();
   return (
-    <WorkbenchPanel title="Integrations" kicker="Submit Issue Packages to defect systems with field and attachment preview">
+    <WorkbenchPanel title="外部系统集成" kicker="预览并提交 Issue Package 到缺陷系统，提交前展示字段和附件">
       <div className="integration-grid">
-        {['Jira', 'ZenTao', 'TAPD', 'GitHub Issues', 'GitLab Issues'].map((name) => (
+        {['Jira', '禅道', 'TAPD', 'GitHub Issues', 'GitLab Issues'].map((name) => (
           <article className="tool-card compact" key={name}>
             <UploadCloud size={18} />
             <strong>{name}</strong>
-            <small>Token stored via secure storage in desktop runtime</small>
+            <small>桌面运行时使用安全存储保存 Token</small>
             <button onClick={() => submitIssue(name)}>
               <UploadCloud size={16} />
-              Preview
+              预览
             </button>
           </article>
         ))}
@@ -630,13 +587,10 @@ function IntegrationsView() {
 function SettingsView() {
   const { selfDiagnostics } = useWorkbenchStore();
   return (
-    <WorkbenchPanel title="Settings & Self Diagnostics" kicker="Tool paths, providers, approvals, redaction, symbols, and app observability">
+    <WorkbenchPanel title="设置与自检" kicker="工具路径、Provider、审批、脱敏、符号目录和客户端可观测性">
       <section className="split">
-        <InfoList
-          title="Configuration"
-          items={['ADB path', 'scrcpy path', 'Perfetto path', 'Provider base URL and API key', 'Symbol and mapping folders', 'Redaction rules']}
-        />
-        <InfoList title="Self Diagnostics" items={selfDiagnostics} />
+        <InfoList title="配置项" items={['ADB 路径', 'scrcpy 路径', 'Perfetto 路径', 'Provider base URL 与 API key', '符号和 mapping 目录', '脱敏规则']} />
+        <InfoList title="自检结果" items={selfDiagnostics} />
       </section>
     </WorkbenchPanel>
   );
@@ -648,31 +602,31 @@ function ContextPanel({ device }: { device?: DeviceRef }) {
   return (
     <aside className="context-panel">
       <div className="context-section">
-        <h3>Command Palette</h3>
+        <h3>命令面板</h3>
         <button onClick={() => setActiveView('diagnostics')}>
           <Search size={16} />
-          Run diagnostic
+          执行诊断
         </button>
         <button onClick={() => setActiveView('session')}>
           <FileArchive size={16} />
-          Export issue package
+          导出问题包
         </button>
         <button onClick={() => setActiveView('ai')}>
           <Bot size={16} />
-          Ask Agent
+          询问 Agent
         </button>
       </div>
       <div className="context-section">
-        <h3>Device Snapshot</h3>
-        <Metric label="Model" value={device?.model ?? 'none'} />
-        <Metric label="Build" value={device?.buildFingerprint?.split('/').slice(0, 2).join('/') ?? 'unknown'} />
-        <Metric label="Capabilities" value={`${device?.capabilities.length ?? 0}`} />
+        <h3>设备快照</h3>
+        <Metric label="型号" value={device?.model ?? '无'} />
+        <Metric label="构建" value={device?.buildFingerprint?.split('/').slice(0, 2).join('/') ?? '未知'} />
+        <Metric label="能力数" value={`${device?.capabilities.length ?? 0}`} />
       </div>
       <div className="context-section">
-        <h3>Active Evidence</h3>
-        <small>{session?.events.length ?? 0} timeline events</small>
-        <small>{issuePackage?.evidenceIndex.length ?? 0} package evidence refs</small>
-        <small>{latestArtifact?.summary ?? 'No artifact yet'}</small>
+        <h3>活动证据</h3>
+        <small>{session?.events.length ?? 0} 条时间线事件</small>
+        <small>{issuePackage?.evidenceIndex.length ?? 0} 条问题包证据</small>
+        <small>{latestArtifact?.summary ?? '暂无产物'}</small>
       </div>
     </aside>
   );
@@ -683,15 +637,15 @@ function TaskBar() {
     <footer className="task-bar">
       <span>
         <CheckCircle2 size={15} />
-        Domain tests passing
+        领域测试通过
       </span>
       <span>
         <GitBranch size={15} />
-        Command Gateway ready
+        命令网关就绪
       </span>
       <span>
         <ShieldCheck size={15} />
-        Approval policy active
+        审批策略启用
       </span>
     </footer>
   );
