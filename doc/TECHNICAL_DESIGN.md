@@ -1,278 +1,1042 @@
-# Droid Debug Workbench Technical Design
+# Droid Debug Workbench 技术实现文档
 
-版本：0.1  
-日期：2026-05-25  
-对应 PRD：`doc/PRD.md`  
-目标：提供可直接进入工程实现的技术方案，不创建应用源码或依赖。
+版本：1.0
+日期：2026-05-26
+对应 PRD：`doc/PRD.md`
+产品名：Droid Debug Workbench / 安卓调试工作台
+目标平台：Windows 优先，预留 macOS / Linux
+实现目标：把 Android 设备调试、镜像反控、脚本复现、诊断抓取、局域网远程协作和 AI Agent 统一到一个安全、可审计、可扩展的桌面工作台。
 
-## 1. 技术目标
+## 1. 文档范围
 
-Droid Debug Workbench 的技术架构需要同时满足四类诉求：
+本文档描述完整目标态技术方案，并标注当前仓库已经具备的基础能力和后续真实适配器工作。它用于指导后续工程实现、验收和迭代，不把当前预览版能力误写为已完成的真机闭环。
 
-- 桌面工具体验：Windows 上稳定、轻量、可打包、可更新。
-- 调试工具集成：可靠调用 ADB、fastboot、scrcpy、Perfetto、外部脚本和串口。
-- 实时交互：终端流、日志流、镜像控制、远程控制都需要低延迟和可取消。
-- Agent 安全：AI 可以调用工具，但每次调用都必须被 schema、权限、审计和风险等级约束。
-- 问题闭环：Debug Session、Issue Package、符号化、时间线关联、回归验证和证据化 Agent 输出需要共享同一套证据模型。
+本文档覆盖：
 
-## 2. 推荐技术栈
+- Windows 桌面客户端总体架构。
+- Tauri / React / TypeScript / Rust 分层边界。
+- 设备、终端、镜像、诊断、脚本、远程、Agent、Issue Package、ROM、App、集成等模块设计。
+- IPC command / event 合约。
+- Command Gateway、权限、审批、审计和脱敏模型。
+- WebRTC 局域网远程协作设计。
+- OpenAI-compatible Provider、Agent Tool Registry 和 MCP 扩展设计。
+- 存储、产物目录、测试、构建发布和实施路线。
 
-### 2.1 Desktop Shell
+## 2. 当前仓库状态
 
-采用 Tauri v2 + React + TypeScript。
+截至 2026-05-26，仓库已经形成可运行的产品雏形：
 
-原因：
+- Desktop：Tauri v2 + React + TypeScript。
+- Frontend：明亮中文工具型 UI、左侧导航、设备栏、主工作区、右侧上下文、底部任务栏。
+- Domain：命令风险、设备解析、证据、Recipe、Issue Package、权限、脱敏、符号化、集成 payload 等领域模型。
+- API：Tauri invoke adapter + 浏览器 fallback。
+- Rust Core：Tauri command gateway 示例，可执行部分 adb / scrcpy / recipe / issue package / agent / remote invite / self diagnostics 命令。
+- Tests：前端领域测试和 UI 文案测试。
+- Build：前端生产构建可通过；Rust 格式检查可通过。
 
-- Tauri v2 支持 Windows 应用打包，Windows 可输出 MSI 或 NSIS installer。
-- Tauri shell plugin 支持 sidecar 机制，适合随应用分发 `adb.exe`、`fastboot.exe`、`scrcpy.exe`、Perfetto 工具包装器等外部二进制。
-- Rust 后端适合管理进程、串口、文件、权限和高并发日志流。
-- React/TypeScript 适合实现复杂工具型 UI、多面板状态、命令面板、虚拟列表和可扩展插件视图。
+当前仍不能声称全部真实功能已完成：
 
-参考：
+- 当前环境无在线 Android 设备，无法实测真机 logcat、bugreport、dumpsys、截图、录屏、脚本回放。
+- 当前环境缺少 scrcpy，无法实测真实镜像反控。
+- 当前环境缺少 perfetto，trace 仍需真实采集适配。
+- 当前环境缺少 MSVC `link.exe`，`cargo test` 会在依赖构建阶段被系统工具链阻塞。
+- WebRTC 远程协作、Provider-backed Agent tool calling、真实串口读写、外部缺陷系统提交仍需产品级适配器。
 
-- Tauri Windows installer: https://v2.tauri.app/distribute/windows-installer/
-- Tauri shell sidecar: https://v2.tauri.app/reference/javascript/shell/
+因此工程推进时应把当前仓库视为“可运行工作台骨架 + 领域模型 + 部分命令网关 + fallback 演示”，后续以本文档拆分真实适配器和端到端验收。
 
-### 2.2 Core Runtime
+## 3. 技术目标
 
-Rust Core 负责：
+技术实现需要同时满足六类目标：
 
-- 设备发现和状态机。
-- ADB / fastboot / scrcpy / perfetto 进程管理。
-- 串口枚举、连接和读写。
-- 终端 PTY 或伪终端适配。
-- 日志流分发。
-- 文件系统产物管理。
-- 权限、审计和 Agent 工具执行。
+- 稳定桌面体验：Windows 上可安装、可更新、可自检、低资源占用。
+- 调试工具集成：可靠调用 adb、fastboot、scrcpy、Perfetto、串口、外部脚本。
+- 实时交互：终端流、日志流、镜像控制、脚本录制、远程控制低延迟且可取消。
+- 证据闭环：所有关键操作写入 Debug Session，并产出可引用的 EvidenceRef。
+- 安全可控：UI、远程、Agent、Recipe 共用 Command Gateway、Tool Policy、Approval、Audit。
+- 可扩展：Recipe、Agent Tool、MCP Tool、Issue Package schema、诊断模板和外部集成可扩展。
 
-串口库建议使用 Rust `serialport` crate。它提供跨平台串口 API，包含 Windows COMPort 支持和端口枚举能力。
+## 4. 技术栈
 
-参考：
+### 4.1 Desktop Shell
 
-- serialport-rs: https://github.com/serialport/serialport-rs
-- serialport docs: https://docs.rs/serialport/latest/x86_64-pc-windows-msvc/serialport/
+采用 Tauri v2 + Rust：
 
-### 2.3 Frontend
+- Tauri 负责 Windows 桌面壳、窗口管理、打包、系统 API、IPC。
+- Rust 负责外部进程、串口、文件、诊断产物、权限策略、审计、长任务调度。
+- Windows 发布目标为 NSIS / MSI。
+- 外部工具通过用户配置路径和 sidecar 两种方式支持。
 
-React/TypeScript 负责：
+### 4.2 Frontend
 
-- 多面板工作台 UI。
-- 设备列表和状态栏。
-- 终端视图。
-- 日志视图。
-- 镜像容器和控制状态。
-- 脚本编辑器。
-- 诊断任务向导。
-- AI Chat 和 Agent 工具审批 UI。
+采用 React + TypeScript：
 
-建议库：
-
-- UI 状态：Zustand 或 Redux Toolkit。
-- 数据请求：TanStack Query。
-- 终端：xterm.js。
-- 编辑器：Monaco Editor，用于脚本/Recipe/日志查询。
-- 布局：dockview 或自研 dock layout。
+- UI：React 组件化工作台。
+- 状态：当前仓库使用 Zustand，后续继续保持轻量 store。
 - 图标：lucide-react。
-- 表格/虚拟列表：TanStack Table + virtual。
+- 终端：xterm.js。
+- 构建：Vite。
+- 测试：Vitest。
 
-不在文档阶段引入依赖，工程实现阶段再按实际选择落地。
+后续可按需要引入：
 
-## 3. 总体架构
+- TanStack Query：异步任务和服务端状态缓存。
+- TanStack Virtual：日志、列表和表格虚拟滚动。
+- Monaco Editor：脚本、Recipe、日志查询和 Perfetto 配置编辑。
+- Dockview 或自研 dock layout：多面板停靠布局。
 
-系统分为五层：
+### 4.3 Rust Core
 
-1. UI Layer：React 工作台。
-2. Application Service Layer：TypeScript service、view model、命令面板、状态编排。
-3. Tauri IPC Layer：严格 schema 的 command/event 接口。
-4. Rust Core Layer：设备、进程、串口、诊断、脚本、远程、Agent 工具。
-5. External Tool Layer：adb、fastboot、scrcpy、perfetto、用户脚本、MCP server。
+Rust Core 负责所有系统级能力：
 
-数据流原则：
+- command：命令解析、风险分类、执行、取消、超时、流输出。
+- device：ADB / fastboot / serial 设备发现和能力画像。
+- terminal：PTY、终端会话、日志保存。
+- mirror：scrcpy sidecar 生命周期管理。
+- diagnostic：Recipe 引擎、logcat、bugreport、dumpsys、Perfetto、截图录屏。
+- script：ReplayScript 录制、回放、断言、回归报告。
+- remote：LAN discovery、WebRTC signaling、权限和审计。
+- ai：Provider、Chat、Tool Registry、Agent Runner。
+- session：Debug Session、EvidenceRef、timeline correlation。
+- report：Issue Package 导入导出、证据索引、脱敏。
+- symbolication：Java / native / kernel 符号化。
+- integrations：外部缺陷系统 dry-run 和提交。
+- observability：客户端日志、崩溃报告、自检。
 
-- UI 不直接调用系统命令。
-- 所有命令通过 Rust Core 的 Command Gateway。
-- 所有长任务返回 task id，并通过 event stream 推送进度。
-- 所有外部工具调用必须记录审计日志。
-- Agent 和远程控制复用同一套工具权限系统。
+## 5. 总体架构
 
-## 4. 工程目录建议
+系统分为六层：
+
+```text
+UI Layer
+  React AppShell / Views / Panels / Command Palette
+
+Application Layer
+  Zustand Store / View Model / Workbench API / Browser Fallback
+
+IPC Layer
+  Tauri Commands / Event Streams / Typed DTO
+
+Core Layer
+  Rust Services / Command Gateway / Task Manager / Tool Policy
+
+Adapter Layer
+  ADB / Fastboot / Serial / Scrcpy / Perfetto / WebRTC / Provider
+
+Artifact Layer
+  Sessions / Logs / Traces / Screenshots / Scripts / Issue Packages
+```
+
+核心约束：
+
+- UI 不直接执行系统命令。
+- 所有外部进程必须经过 Command Gateway 或专用 adapter。
+- 所有长任务返回 taskId，并通过事件流推送进度。
+- Agent 和远程控制不绕过本地权限系统。
+- 每个可交付产物都写入 metadata，并能映射到 Debug Session。
+
+## 6. 工程目录规划
+
+当前仓库目录已基本形成，后续可按模块继续拆分：
 
 ```text
 DroidDebugWorkbench/
   doc/
     PRD.md
     TECHNICAL_DESIGN.md
+    IMPLEMENTATION_STATUS.md
   src/
+    App.tsx
+    styles.css
     app/
-    features/
-      device/
-      terminal/
-      mirror/
-        diagnostics/
-        script/
-        remote/
-        ai/
-        session/
-        report/
-        integrations/
-        settings/
-    shared/
+      api.ts
+      fixtures.ts
+      store.ts
+      __tests__/
+    domain/
+      commandGateway.ts
+      deviceParsing.ts
+      evidence.ts
+      integrations.ts
+      issuePackage.ts
+      permissions.ts
+      recipes.ts
+      redaction.ts
+      symbolication.ts
+      types.ts
+      __tests__/
   src-tauri/
     src/
-      core/
-        command/
-        device/
-        adb/
-        serial/
-        mirror/
-        diagnostics/
-        script/
-        remote/
-        ai/
-        session/
-        report/
-        symbolication/
-        integrations/
-        observability/
-        audit/
       main.rs
-    binaries/
-      windows/
-        adb.exe
-        fastboot.exe
-        scrcpy.exe
+      lib.rs
+    tauri.conf.json
 ```
 
-说明：
+目标拆分：
 
-- `doc/` 是当前文档目录。
-- `src/` 和 `src-tauri/` 是后续实现建议，本次不创建。
-- 外部二进制是否随仓库提交需要工程阶段再决定；通常不建议把大二进制直接提交到源码仓库，可在 release / setup 脚本中下载校验。
+```text
+src/
+  app/
+    api/
+    store/
+    routing/
+  features/
+    device/
+    terminal/
+    mirror/
+    diagnostics/
+    scripts/
+    remote/
+    ai/
+    session/
+    reports/
+    packages/
+    rom/
+    integrations/
+    settings/
+  domain/
+  shared/
 
-## 5. 核心领域模型
+src-tauri/src/
+  core/
+    command/
+    task/
+    device/
+    adb/
+    fastboot/
+    serial/
+    terminal/
+    mirror/
+    diagnostic/
+    script/
+    remote/
+    ai/
+    session/
+    report/
+    permission/
+    audit/
+    redaction/
+    symbolication/
+    integration/
+    observability/
+```
 
-### 5.1 DeviceRef
+拆分原则：
+
+- `domain/` 放纯业务模型和纯函数，前后端可镜像实现或共享 schema。
+- `features/` 放 UI、view model 和模块内状态。
+- `src-tauri/src/core/` 放真实系统能力。
+- `app/api.ts` 只保留 IPC facade，不承载业务规则。
+
+## 7. UI 架构
+
+### 7.1 App Shell
+
+主界面结构：
+
+- `Sidebar`：主导航。
+- `DeviceRail`：设备列表、连接入口。
+- `DeviceStatusBar`：当前设备和工具状态。
+- `WorkbenchPanel`：模块主工作区。
+- `ContextPanel`：命令面板、设备快照、证据摘要。
+- `TaskBar`：长任务、远程、审批、Agent 调用状态。
+
+目标新增：
+
+- `CommandPalette`：键盘驱动的全局命令入口。
+- `DockWorkspace`：终端、日志、镜像、时间线可停靠。
+- `NotificationCenter`：任务完成、审批、远程请求、工具缺失提示。
+- `SettingsDrawer`：轻量设置编辑。
+
+### 7.2 现代明亮工具风格
+
+视觉规范：
+
+- 默认明亮主题。
+- 白色侧边栏、浅灰工作区、蓝色主操作、低饱和状态色。
+- 卡片、面板、按钮圆角不超过 8px。
+- 高密度但不拥挤，避免营销式 hero。
+- 表格、日志、终端使用清晰单行密度和等宽字体。
+- 状态色固定语义：success、warning、danger、running、muted。
+- 关键状态使用文字 + icon，不只依赖颜色。
+
+### 7.3 中文与本地化
+
+MVP 使用中文作为默认 UI 语言：
+
+- 用户可见文案必须中文化。
+- 工具名、命令、协议、配置字段保留英文。
+- 日志原文不翻译。
+- 术语统一：设备、镜像、终端、诊断、脚本、会话、Agent、远程、应用、ROM、集成、设置。
+- 测试必须覆盖乱码回归，避免 Windows 控制台编码造成文件内容污染。
+
+## 8. IPC 设计
+
+### 8.1 命名约定
+
+Tauri command 使用 snake_case：
+
+- `list_devices`
+- `execute_command`
+- `start_mirror`
+- `run_recipe`
+- `list_recipes`
+- `list_scripts`
+- `export_issue_package`
+- `create_remote_invite`
+- `list_agent_tools`
+- `run_agent_prompt`
+- `self_diagnostics`
+
+TypeScript facade 使用 camelCase：
+
+- `workbenchApi.listDevices()`
+- `workbenchApi.executeCommand()`
+- `workbenchApi.startMirror()`
+
+### 8.2 返回模型
+
+短任务直接返回 DTO：
 
 ```ts
-type DeviceTransport = 'adb-usb' | 'adb-wifi' | 'serial' | 'fastboot' | 'remote';
-type DeviceState = 'device' | 'offline' | 'unauthorized' | 'recovery' | 'sideload' | 'fastboot' | 'disconnected';
+type DeviceRef = {
+  id: string;
+  serial: string;
+  transport: 'adb-usb' | 'adb-wifi' | 'fastboot' | 'serial';
+  state: string;
+  model?: string;
+  capabilities: string[];
+  profile?: DeviceCapabilityProfile;
+};
+```
 
-interface DeviceRef {
+长任务返回 `TaskRef`：
+
+```ts
+type TaskRef = {
+  id: string;
+  kind: string;
+  status: 'queued' | 'running' | 'success' | 'failed' | 'cancelled';
+  createdAt: string;
+};
+```
+
+事件流统一：
+
+```ts
+type WorkbenchEvent =
+  | { type: 'task.progress'; taskId: string; percent?: number; message: string }
+  | { type: 'task.output'; taskId: string; stream: 'stdout' | 'stderr'; chunk: string }
+  | { type: 'task.completed'; taskId: string; artifactId?: string }
+  | { type: 'device.changed'; device: DeviceRef }
+  | { type: 'approval.requested'; request: ApprovalRequest }
+  | { type: 'remote.action'; action: RemoteActionAudit }
+  | { type: 'agent.toolCall'; call: AgentToolCall };
+```
+
+### 8.3 错误模型
+
+所有 IPC 错误统一包装：
+
+```ts
+type WorkbenchError = {
+  code: string;
+  message: string;
+  hint?: string;
+  recoverable: boolean;
+  details?: Record<string, unknown>;
+};
+```
+
+常见错误码：
+
+- `TOOL_NOT_FOUND`
+- `DEVICE_OFFLINE`
+- `ADB_UNAUTHORIZED`
+- `COMMAND_BLOCKED`
+- `APPROVAL_REQUIRED`
+- `TASK_TIMEOUT`
+- `ARTIFACT_WRITE_FAILED`
+- `REMOTE_PERMISSION_DENIED`
+- `PROVIDER_AUTH_FAILED`
+- `REDACTION_REQUIRED`
+
+## 9. 数据模型
+
+### 9.1 DeviceRef
+
+设备模型用于所有模块绑定目标设备：
+
+```ts
+type DeviceRef = {
   id: string;
   serial: string;
   alias?: string;
-  transport: DeviceTransport;
-  state: DeviceState;
+  transport: 'adb-usb' | 'adb-wifi' | 'fastboot' | 'serial' | 'remote';
+  state: 'device' | 'offline' | 'unauthorized' | 'fastboot' | 'serial' | 'unknown';
   model?: string;
   manufacturer?: string;
   androidVersion?: string;
   apiLevel?: number;
   buildFingerprint?: string;
-  rootState?: 'unknown' | 'none' | 'adb-root' | 'su';
+  rootState?: 'unknown' | 'no-root' | 'adb-root' | 'su';
   capabilities: string[];
   profile?: DeviceCapabilityProfile;
   lastSeenAt: string;
-}
+};
 ```
 
-设备能力画像：
+### 9.2 DeviceCapabilityProfile
+
+能力画像驱动 UI 可用性和 Recipe 校验：
 
 ```ts
-interface DeviceCapabilityProfile {
+type DeviceCapabilityProfile = {
   abi: string[];
-  screen?: { width: number; height: number; density: number; refreshRate?: number };
+  screen?: {
+    width: number;
+    height: number;
+    density: number;
+    refreshRate?: number;
+  };
   selinux?: 'enforcing' | 'permissive' | 'unknown';
-  partitions?: PartitionInfo[];
+  partitions: Array<{ name: string; sizeBytes?: number; type?: string }>;
   toolAvailability: Record<string, boolean>;
   scrcpy: { available: boolean; version?: string; audio?: boolean; hid?: boolean };
   perfetto: { available: boolean; sdkSupported: boolean; dataSources: string[] };
   wirelessDebugging?: { paired: boolean; connected: boolean; port?: number };
-}
+};
 ```
 
-### 5.2 CommandRequest
+### 9.3 CommandExecutionResult
 
 ```ts
-type CommandKind = 'local' | 'adb' | 'adb-shell' | 'fastboot' | 'serial' | 'scrcpy' | 'perfetto';
-type RiskLevel = 'read' | 'write' | 'dangerous' | 'destructive';
-
-interface CommandRequest {
-  id?: string;
-  kind: CommandKind;
-  deviceId?: string;
+type CommandExecutionResult = {
+  commandLine: string;
   argv: string[];
-  cwd?: string;
-  timeoutMs?: number;
-  env?: Record<string, string>;
+  status: 'success' | 'failed' | 'blocked' | 'timeout' | 'cancelled';
+  exitCode?: number;
+  stdout: string;
+  stderr: string;
   riskLevel: RiskLevel;
   requiresApproval: boolean;
-  redactRules?: RedactRule[];
-  reason?: string;
-}
+  durationMs: number;
+};
 ```
 
-### 5.3 DiagnosticArtifact
+### 9.4 DebugRecipe
 
 ```ts
-interface DiagnosticArtifact {
-  id: string;
-  deviceId: string;
-  recipeId: string;
-  createdAt: string;
-  status: 'running' | 'success' | 'failed' | 'cancelled';
-  rootDir: string;
-  files: ArtifactFile[];
-  summary?: string;
-  timeline?: TimelineEvent[];
-}
-```
-
-### 5.4 DebugRecipe
-
-```ts
-interface DebugRecipe {
+type DebugRecipe = {
   id: string;
   name: string;
-  description?: string;
-  category: 'log' | 'trace' | 'crash' | 'anr' | 'performance' | 'power' | 'graphics' | 'custom';
+  category: 'log' | 'trace' | 'screen' | 'rom' | 'app' | 'custom';
   requiredCapabilities: string[];
   riskLevel: RiskLevel;
   inputs: RecipeInput[];
   steps: RecipeStep[];
-  outputPolicy: OutputPolicy;
-}
+  outputPolicy: {
+    rootDir: string;
+    zipByDefault: boolean;
+    redactByDefault: boolean;
+  };
+};
 ```
 
-### 5.5 ReplayScript
+### 9.5 ReplayScript
 
 ```ts
-interface ReplayScript {
+type ReplayScript = {
   id: string;
   name: string;
   createdAt: string;
-  sourceDevice?: DeviceRef;
+  targetPackage?: string;
   coordinateSpace: { width: number; height: number; rotation: number };
   steps: ReplayStep[];
+};
+
+type ReplayStep =
+  | { id: string; type: 'tap'; payload: { x: number; y: number; selector?: string } }
+  | { id: string; type: 'swipe'; payload: { from: Point; to: Point; durationMs: number } }
+  | { id: string; type: 'text'; payload: { value: string } }
+  | { id: string; type: 'key'; payload: { keyCode: number } }
+  | { id: string; type: 'wait'; payload: { durationMs?: number; condition?: WaitCondition } }
+  | { id: string; type: 'command'; payload: { commandLine: string } }
+  | { id: string; type: 'assert'; payload: AssertionPayload };
+```
+
+### 9.6 EvidenceRef
+
+```ts
+type EvidenceRef = {
+  id: string;
+  type: 'log-line' | 'command-output' | 'trace-range' | 'screenshot' | 'screenrecord' | 'script-step' | 'artifact';
+  artifactId?: string;
+  filePath?: string;
+  timestamp?: string;
+  lineRange?: [number, number];
+  traceTimeRangeNs?: [number, number];
+  description?: string;
+  eventId?: string;
+};
+```
+
+### 9.7 IssuePackage
+
+```ts
+type IssuePackage = {
+  id: string;
+  schemaVersion: number;
+  title: string;
+  createdAt: string;
+  deviceProfile: DeviceCapabilityProfile;
+  buildInfo: Record<string, unknown>;
+  sessionId: string;
+  replayScriptIds: string[];
+  artifactIds: string[];
+  evidenceIndex: EvidenceRef[];
+  agentSummary?: EvidenceBackedSummary;
+  redactionStatus: 'raw' | 'redacted' | 'skipped';
+};
+```
+
+## 10. Command Gateway
+
+Command Gateway 是所有命令入口的强制边界。
+
+职责：
+
+- 命令解析和 argv 构造。
+- 自动注入设备 serial。
+- 风险分类。
+- 权限校验。
+- 审批请求。
+- 命令执行、超时、取消、输出流。
+- 审计记录。
+- 产物落盘。
+
+### 10.1 风险分类
+
+风险等级：
+
+- `read`：只读命令，例如 `adb devices`、`getprop`、`dumpsys`、`logcat -d`。
+- `write`：改变运行状态但可逆，例如 `input tap`、`am start`、`settings put`、`push`。
+- `dangerous`：影响设备稳定性或调试状态，例如 `reboot`、`root`、`remount`、`setprop`。
+- `destructive`：可能删除数据、刷写或破坏环境，例如 `pm clear`、`uninstall`、`fastboot flash`、`erase`、`wipe`。
+
+### 10.2 审批策略
+
+审批来源：
+
+- 本地用户。
+- 远程测试端授权。
+- Agent tool approval。
+- Recipe run approval。
+
+审批请求模型：
+
+```ts
+type ApprovalRequest = {
+  id: string;
+  actor: ActorRef;
+  deviceId?: string;
+  commandLine?: string;
+  toolName?: string;
+  riskLevel: RiskLevel;
+  reason: string;
+  impact: string;
+  expiresAt: string;
+};
+```
+
+审批要求：
+
+- `read` 默认允许。
+- `write` 可按策略免审批或提示。
+- `dangerous` 必须确认。
+- `destructive` 必须二次确认，并要求展示设备 ID、命令、影响范围。
+- 远程和 Agent 发起的 `write` 以上操作默认需要本地确认。
+
+### 10.3 审计日志
+
+审计日志写入 JSONL：
+
+```json
+{
+  "id": "audit-001",
+  "timestamp": "2026-05-26T10:00:00Z",
+  "actor": { "type": "local-user", "id": "local" },
+  "deviceId": "adb-usb-R58T",
+  "action": "execute_command",
+  "riskLevel": "read",
+  "status": "success",
+  "argvRedacted": ["adb", "-s", "***", "shell", "getprop"],
+  "artifactId": "artifact-001"
 }
 ```
 
-`ReplayStep` 类型包括：
+审计要求：
 
-- `tap`
-- `swipe`
-- `key`
-- `text`
-- `terminal`
-- `adb`
-- `wait`
-- `assert`
-- `capture`
-- `marker`
+- 不记录 API key、token、明文密码。
+- 串口输出可按配置保存，但默认不上传。
+- Agent prompt 和诊断摘要需要脱敏后进入 Issue Package。
 
-### 5.6 AgentTool
+## 11. 设备与连接设计
+
+### 11.1 ADB Adapter
+
+基础命令：
+
+- `adb devices -l`
+- `adb start-server`
+- `adb kill-server`
+- `adb version`
+- `adb -s <serial> shell getprop`
+- `adb -s <serial> shell wm size`
+- `adb -s <serial> shell wm density`
+- `adb -s <serial> shell dumpsys SurfaceFlinger`
+
+能力画像采集：
+
+- Android 版本：`ro.build.version.release`
+- API：`ro.build.version.sdk`
+- ABI：`ro.product.cpu.abilist`
+- fingerprint：`ro.build.fingerprint`
+- SELinux：`getenforce`
+- root：`adb root` 状态或 `id`
+- screen：`wm size`、`wm density`、SurfaceFlinger refresh rate
+- package：`pm list packages`
+- Perfetto：版本和 data sources
+- scrcpy：本机工具可用性和版本
+
+### 11.2 Wireless ADB
+
+流程：
+
+1. 用户输入设备 IP、pairing port、pairing code。
+2. 执行 `adb pair host:port code`。
+3. 执行 `adb connect host:port`。
+4. 保存最近连接和别名。
+5. 失败时显示端口、防火墙、同网段、授权建议。
+
+### 11.3 Fastboot Adapter
+
+基础能力：
+
+- `fastboot devices`
+- `fastboot getvar all`
+- 分区信息解析。
+- reboot bootloader / reboot recovery 作为危险操作。
+- flash / erase / wipe 作为 destructive 操作。
+
+MVP 不做自动刷机流水线，只提供可审计命令模板。
+
+### 11.4 Serial Adapter
+
+Windows 串口能力：
+
+- 枚举 COM 口、VID / PID、设备名。
+- 配置 baud rate、data bits、stop bits、parity、flow control、encoding。
+- 终端读写、日志保存、断线重连。
+- 占用检测和失败提示。
+
+建议 Rust 依赖：
+
+- `serialport`：跨平台串口。
+- `portable-pty` 或 Windows ConPTY：终端会话。
+
+## 12. 终端设计
+
+终端类型：
+
+- local：本机 shell。
+- adb shell：绑定具体 Android 设备。
+- serial：串口控制台。
+- fastboot：fastboot 命令模板和输出。
+
+前端：
+
+- 使用 xterm.js 渲染。
+- 每个 tab 绑定 sessionId、deviceId、terminalType。
+- 支持搜索、复制、保存、清屏、命令历史。
+
+后端：
+
+- 每个终端 session 有独立进程或串口句柄。
+- 输出通过 `terminal.output` 事件推送。
+- 输入通过 `terminal.write` command 发送。
+- session 关闭时写入 Debug Session。
+
+高风险命令处理：
+
+- 终端输入进入 Command Gateway 解析。
+- 检测危险模式时不直接执行，先发审批。
+- 审批结果写入 session timeline。
+
+## 13. 镜像与反控设计
+
+### 13.1 MVP：scrcpy sidecar 独立窗口
+
+流程：
+
+1. UI 调用 `start_mirror(deviceId, profile)`。
+2. Rust 检查 scrcpy 路径或 sidecar。
+3. 构造参数：`-s <serial>`、`--max-size`、`--video-bit-rate`、`--max-fps`。
+4. 启动 scrcpy 子进程。
+5. 返回 `MirrorSession`，记录 pid、状态、参数。
+6. 停止时 kill 子进程，并写审计。
+
+优点：
+
+- 快速可用。
+- 复用成熟镜像和反控能力。
+- 避免初期处理视频渲染、输入注入和音频转发复杂度。
+
+限制：
+
+- 窗口不是原生嵌入，布局一致性较弱。
+- 脚本录制需要从 scrcpy 控制事件、ADB input 或 UI overlay 捕获。
+
+### 13.2 后续：嵌入式镜像
+
+可选方案：
+
+- scrcpy server + 自研视频解码渲染。
+- Windows 子窗口嵌入。
+- WebRTC 本地流桥接。
+
+必须满足：
+
+- 不绕过 FLAG_SECURE。
+- 延迟可接受。
+- 反控事件进入 ReplayScript。
+- 截图、录屏和 timeline 可关联。
+
+## 14. 诊断 Recipe 引擎
+
+Recipe 是一键诊断和自定义操作的声明式模型。
+
+执行流程：
+
+1. UI 展示 Recipe 步骤、风险、产物路径。
+2. 用户选择设备和输入参数。
+3. Core 校验设备能力。
+4. Command Gateway 审批。
+5. Task Manager 创建 task。
+6. 逐步执行命令。
+7. 输出写入 artifact root。
+8. 生成 metadata、evidence-index、timeline。
+9. 返回 DiagnosticArtifact。
+
+### 14.1 内置 Recipe
+
+MVP 内置：
+
+- `collect-logcat`
+- `collect-bugreport`
+- `collect-perfetto-trace`
+- `collect-screenshot`
+- `collect-screenrecord`
+- `collect-issue-package`
+- `collect-regression-report`
+
+扩展 Recipe：
+
+- `collect-anr-package`
+- `collect-crash-package`
+- `collect-performance-package`
+- `collect-power-package`
+- `collect-graphics-package`
+- `collect-network-package`
+- `collect-ota-package`
+- `collect-selinux-package`
+
+### 14.2 产物目录
+
+统一产物结构：
+
+```text
+artifacts/
+  20260526-143000-collect-crash-package/
+    metadata.json
+    commands.jsonl
+    audit.jsonl
+    logcat/
+      all.txt
+      crash.txt
+    bugreport/
+      bugreport.zip
+    dumpsys/
+      activity.txt
+      window.txt
+    traces/
+      main.perfetto-trace
+    screenshots/
+      current.png
+    screenrecords/
+      reproduction.mp4
+    evidence-index.json
+    timeline.json
+```
+
+### 14.3 Perfetto
+
+支持两种采集模式：
+
+- Android 设备端 `perfetto` 命令。
+- 本机 perfetto 工具连接设备。
+
+Trace 配置：
+
+- UI 选择模板：启动、卡顿、功耗、图形、binder、sched。
+- Monaco 编辑 raw config。
+- 产物保存 `.perfetto-trace`。
+- 后续可集成 Perfetto UI deep link 或内置 viewer。
+
+## 15. 脚本录制与回放
+
+### 15.1 录制来源
+
+录制事件来源：
+
+- 镜像点击、滑动、键盘。
+- UIAutomator selector。
+- 终端命令。
+- ADB input 命令。
+- 截图和断言。
+- 等待条件。
+
+MVP 录制策略：
+
+- 先支持客户端内显式“添加步骤”和终端命令录入。
+- scrcpy 独立窗口阶段，可通过 overlay、ADB input wrapper 或用户手动录制基础事件。
+- 嵌入式镜像阶段完整捕获 pointer / key events。
+
+### 15.2 回放引擎
+
+回放流程：
+
+1. 绑定目标设备和分辨率。
+2. 校验设备能力。
+3. 坐标归一化转换。
+4. 优先使用 selector，失败 fallback 到坐标。
+5. 每步执行后记录输出、截图或日志窗口。
+6. 断言失败时停止或继续，取决于策略。
+7. 生成 RegressionReport。
+
+### 15.3 回归报告
 
 ```ts
-interface AgentTool {
+type RegressionReport = {
+  id: string;
+  scriptId: string;
+  deviceId: string;
+  status: 'passed' | 'failed' | 'blocked';
+  startedAt: string;
+  endedAt: string;
+  stepResults: Array<{
+    stepId: string;
+    status: 'passed' | 'failed' | 'skipped';
+    evidenceRefs: string[];
+    message?: string;
+  }>;
+  environmentDiff?: Record<string, unknown>;
+};
+```
+
+## 16. Debug Session 与 Evidence
+
+Debug Session 是问题闭环核心。
+
+记录事件：
+
+- 设备连接和切换。
+- 终端命令。
+- Recipe 任务。
+- 镜像启动 / 停止。
+- 脚本录制 / 回放。
+- 远程用户加入和操作。
+- Agent tool call。
+- 关键日志自动标注。
+- Issue Package 导出。
+
+### 16.1 Timeline Correlation
+
+时间线关联策略：
+
+- 所有事件使用 UTC 时间。
+- 设备日志尽量解析设备时间戳。
+- 命令输出记录本机采集时间。
+- Perfetto trace 使用 trace timestamp range。
+- 截图 / 录屏记录开始结束时间。
+- EvidenceRef 关联 file path、line range、trace range 或 media timestamp。
+
+### 16.2 Evidence Backed Summary
+
+Agent 或系统生成摘要必须是证据化：
+
+```ts
+type EvidenceBackedSummary = {
+  conclusion: string;
+  evidenceIds: string[];
+  actionsTaken: string[];
+  unverifiedItems: string[];
+};
+```
+
+规则：
+
+- 结论必须引用 EvidenceRef。
+- 无证据的判断必须写入 unverifiedItems。
+- 导出 Issue Package 时保留证据索引。
+
+## 17. Issue Package
+
+Issue Package 是可移交问题包。
+
+目录结构：
+
+```text
+issue-packages/
+  issue-login-crash-20260526/
+    manifest.json
+    README.md
+    device-profile.json
+    build-info.json
+    debug-session.json
+    evidence-index.json
+    agent-summary.md
+    replay-scripts/
+    artifacts/
+    screenshots/
+    screenrecords/
+    redaction-report.json
+```
+
+### 17.1 manifest
+
+```json
+{
+  "schemaVersion": 1,
+  "packageId": "issue-login-crash-20260526",
+  "createdAt": "2026-05-26T10:00:00Z",
+  "source": "Droid Debug Workbench",
+  "deviceId": "adb-usb-R58T",
+  "sessionId": "session-001",
+  "redactionStatus": "redacted"
+}
+```
+
+### 17.2 导出流程
+
+1. 锁定 Debug Session 快照。
+2. 收集 Artifact、ReplayScript、EvidenceRef。
+3. 执行脱敏扫描。
+4. 生成 manifest、README、redaction-report。
+5. 打 zip。
+6. 记录导出审计。
+
+### 17.3 导入流程
+
+1. 校验 manifest 和 schemaVersion。
+2. 校验证据索引路径存在。
+3. 展示只读时间线。
+4. 允许查看日志、截图、trace 和 replay script。
+5. 禁止自动执行导入包里的脚本，执行前必须本地审批。
+
+## 18. 远程协作设计
+
+### 18.1 范围
+
+MVP 只做局域网远程协作：
+
+- 不接管整台 PC。
+- 不穿透公网。
+- 不引入中心化账号。
+- 只暴露 Droid Debug Workbench 内部的镜像、终端、诊断、产物和 Agent 能力。
+
+### 18.2 连接流程
+
+1. 测试端创建 invite。
+2. 生成邀请码和 LAN candidates。
+3. 开发端输入邀请码或打开局域网链接。
+4. 使用 mDNS / UDP discovery 或手动 IP 建立 signaling。
+5. WebRTC 建立 data channel。
+6. 测试端确认身份和权限。
+7. 双方进入远程会话。
+
+### 18.3 通道
+
+建议通道：
+
+- `control`：远程操作请求。
+- `terminal`：终端输入输出代理。
+- `mirror`：镜像控制事件和状态。
+- `artifact`：产物列表和下载。
+- `audit`：审计事件。
+
+若初期不传视频流，可让开发端通过远程控制测试端的本地 scrcpy 窗口状态和截图刷新；后续再传 mirror stream。
+
+### 18.4 权限
+
+权限模型：
+
+```ts
+type RemotePermission =
+  | 'viewer'
+  | 'mirror-control'
+  | 'terminal-read'
+  | 'terminal-control'
+  | 'diagnostic-runner'
+  | 'admin';
+```
+
+规则：
+
+- 会话创建默认 viewer。
+- 每次提权需测试端确认。
+- 测试端可随时暂停、降权、踢出。
+- 所有远程操作都带 actorId。
+- 高风险命令仍走 Command Gateway。
+
+## 19. AI Chat 与 Agent
+
+### 19.1 Provider Manager
+
+支持 OpenAI-compatible Provider：
+
+```ts
+type ProviderConfig = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKeyRef: string;
+  models: string[];
+  defaultModel?: string;
+};
+```
+
+API key 存储：
+
+- Windows Credential Manager 或 Tauri stronghold / 加密存储。
+- 普通配置文件只保存 `apiKeyRef`。
+- 自检不得输出密钥。
+
+### 19.2 Chat
+
+Chat 能力：
+
+- 多 Provider。
+- 选择模型。
+- 会话历史。
+- 引用当前 Debug Session、设备画像、产物索引。
+- 输出支持证据卡片。
+
+### 19.3 Agent Tool Registry
+
+工具注册模型：
+
+```ts
+type AgentTool = {
   name: string;
   description: string;
   inputSchema: JsonSchema;
@@ -281,992 +1045,557 @@ interface AgentTool {
   permission: string;
   supportsDryRun: boolean;
   handler: string;
-}
+};
 ```
 
-### 5.7 DebugSession
-
-```ts
-type SessionEventKind =
-  | 'user-action'
-  | 'mirror-event'
-  | 'terminal-command'
-  | 'log-event'
-  | 'trace-marker'
-  | 'diagnostic-task'
-  | 'remote-action'
-  | 'agent-tool-call'
-  | 'artifact-created'
-  | 'assertion-result';
-
-interface DebugSession {
-  id: string;
-  deviceId: string;
-  startedAt: string;
-  endedAt?: string;
-  title?: string;
-  events: SessionEvent[];
-  artifacts: DiagnosticArtifact[];
-  issuePackageId?: string;
-}
-
-interface SessionEvent {
-  id: string;
-  timestamp: string;
-  kind: SessionEventKind;
-  source: 'local-user' | 'remote-user' | 'agent' | 'recipe' | 'system';
-  title: string;
-  evidenceRefs: EvidenceRef[];
-  payload?: unknown;
-}
-```
-
-### 5.8 IssuePackage
-
-```ts
-interface IssuePackage {
-  id: string;
-  createdAt: string;
-  deviceProfile: DeviceCapabilityProfile;
-  buildInfo: Record<string, string>;
-  sessionId: string;
-  replayScriptIds: string[];
-  artifactIds: string[];
-  evidenceIndex: EvidenceRef[];
-  agentSummary?: EvidenceBackedSummary;
-  redactionStatus: 'not-run' | 'redacted' | 'partially-redacted';
-}
-
-interface EvidenceRef {
-  id: string;
-  type: 'log-line' | 'command-output' | 'trace-slice' | 'screenshot' | 'screenrecord' | 'script-step' | 'artifact-file';
-  artifactId?: string;
-  filePath?: string;
-  timestamp?: string;
-  lineRange?: [number, number];
-  traceTimeRangeNs?: [number, number];
-  description?: string;
-}
-```
-
-### 5.9 SymbolicationProfile
-
-```ts
-interface SymbolicationProfile {
-  id: string;
-  name: string;
-  kind: 'proguard-r8' | 'native' | 'kernel-vendor';
-  buildFingerprint?: string;
-  appPackage?: string;
-  paths: string[];
-  matchRules: Record<string, string>;
-}
-```
-
-## 6. 模块设计
-
-### 6.1 Device Hub
-
-职责：
-
-- 定时执行 `adb devices -l`。
-- 解析 USB、Wi-Fi、recovery、sideload 状态。
-- 执行 `fastboot devices`。
-- 枚举串口。
-- 合并设备状态为统一 DeviceRef。
-- 采集和刷新 DeviceCapabilityProfile。
-- 提供设备选择、别名、最近使用记录。
-
-关键接口：
-
-- `device.list()`
-- `device.watch()`
-- `device.setAlias(deviceId, alias)`
-- `adb.configurePath(path)`
-- `adb.restartServer()`
-- `adb.pair(host, port, code)`
-- `adb.connect(host, port)`
-- `serial.listPorts()`
-- `device.profile(deviceId)`
-- `device.refreshCapabilities(deviceId)`
-
-状态机：
-
-- `disconnected -> unauthorized -> device`
-- `device -> offline -> disconnected`
-- `device -> recovery`
-- `device -> fastboot`
-- `adb-wifi paired -> connected -> offline`
-
-异常处理：
-
-- `unauthorized`：提示重新授权 RSA。
-- `offline`：提供 kill-server / reconnect。
-- 多设备：所有命令必须绑定 device id。
-- ADB path 不可用：阻止相关功能并进入设置引导。
-
-### 6.2 Terminal Hub
-
-职责：
-
-- 提供 local / adb shell / serial / fastboot 终端会话。
-- 管理输入、输出、resize、退出码。
-- 支持保存日志和搜索。
-- 支持录制终端命令到 ReplayScript。
-
-技术点：
-
-- Windows local shell 可用 PowerShell 或 cmd。
-- adb shell 和 fastboot 使用 child process。
-- 串口 shell 直接读写 COMPort。
-- 输出通过 Tauri event 分块推送。
-
-接口：
-
-- `terminal.create(kind, deviceId, options)`
-- `terminal.write(sessionId, bytes)`
-- `terminal.resize(sessionId, cols, rows)`
-- `terminal.close(sessionId)`
-- `terminal.save(sessionId, path)`
-
-### 6.3 Mirror Hub
-
-职责：
-
-- 启动和管理 scrcpy sidecar。
-- 处理镜像参数模板。
-- 监听 scrcpy 进程状态。
-- 将镜像控制事件纳入脚本录制。
-
-MVP 方案：
-
-- 直接启动 scrcpy 独立窗口，先保证稳定。
-- UI 中维护 scrcpy 会话状态、参数和录制入口。
-- 后续再探索嵌入窗口或虚拟显示流集成。
-
-参数模板：
-
-- device serial
-- max size
-- video bit rate
-- max fps
-- record path
-- no control
-- turn screen off
-- stay awake
-- show touches
-- audio policy
-
-风险：
-
-- scrcpy 窗口嵌入跨平台复杂，MVP 不要求嵌入。
-- 部分 App 设置 FLAG_SECURE 时镜像可能黑屏，客户端应提示限制而不是绕过。
-
-### 6.4 Diagnostic Hub
-
-职责：
-
-- 执行 DebugRecipe。
-- 采集 logcat、bugreport、Perfetto、dumpsys、截图、录屏等产物。
-- 管理产物目录、摘要、脱敏和导出。
-- 将产物写入 Debug Session 时间线和证据索引。
-- 对 logcat、Perfetto、bugreport、dumpsys 和用户操作做时间线对齐。
-
-内置 Recipe：
-
-- `collect-logcat`
-- `collect-bugreport`
-- `collect-perfetto-trace`
-- `collect-anr-package`
-- `collect-crash-package`
-- `collect-performance-package`
-- `collect-power-package`
-- `collect-graphics-package`
-- `collect-issue-package`
-- `collect-regression-report`
-
-产物目录：
-
-```text
-artifacts/
-  yyyyMMdd-HHmmss-deviceAlias-recipeName/
-    metadata.json
-    timeline.json
-    commands.log
-    evidence-index.json
-    logcat/
-    bugreport/
-    traces/
-    screenshots/
-    screenrecords/
-    dumpsys/
-```
-
-Perfetto：
-
-- Android 11+ 优先使用 on-device perfetto。
-- 支持预设 trace config。
-- 输出 `.perfetto-trace`。
-- 产物可提示用户用 Perfetto UI 打开。
-
-bugreport：
-
-- 使用 `adb bugreport`。
-- 若生成 zip，记录 zip 路径。
-- 若老版本设备写入 `/bugreports`，执行 pull。
-
-logcat：
-
-- 支持 `-b all`。
-- 支持按时间、包名、pid、tag、level 过滤。
-- 支持 ring buffer 和持续采集。
-
-时间线关联：
-
-- 统一将事件时间标准化为设备时间、主机时间和单调时间三种字段。
-- 对 logcat 行、Perfetto slice、终端命令、截图和录屏片段建立 EvidenceRef。
-- 自动标记 crash、ANR、binder timeout、input timeout、jank、thermal throttle、low memory、SELinux denied。
-- 关联失败时保留原始时间戳，并在 Issue Package 中标注可信度。
-
-### 6.5 Script Hub
-
-职责：
-
-- 录制用户对镜像和终端的操作。
-- 保存 ReplayScript。
-- 回放脚本。
-- 失败时生成定位信息。
-- 支持回归验证模式并输出验证报告。
-
-录制来源：
-
-- scrcpy 控制事件。
-- 客户端内终端命令。
-- 客户端一键操作。
-- 手动 marker。
-
-回放策略：
-
-1. 如果步骤有 UIAutomator selector，优先按 selector 查找控件。
-2. 如果 selector 缺失或查找失败，按归一化坐标回放。
-3. 每个关键步骤后允许等待条件。
-4. 失败时截图、保存当前 Activity、保存 logcat 窗口。
-
-回归验证：
-
-- ReplayScript 可绑定断言、允许失败阈值和期望日志模式。
-- 执行结果生成 `RegressionReport`，包含通过/失败、失败步骤、环境差异、截图和日志证据。
-- 验证报告可进入 Issue Package，用于证明问题已修复或仍可复现。
-
-MVP 限制：
-
-- 不承诺跨设备、跨分辨率 100% 成功。
-- 不承诺复杂游戏/高频手势稳定回放。
-
-### 6.6 Remote Hub
-
-职责：
-
-- 局域网会话发现、邀请、加入。
-- 传输镜像画面、控制事件、终端输入输出、诊断请求。
-- 权限和审计。
-
-技术方案：
-
-- WebRTC 传输实时视频和控制数据。
-- DataChannel 传输控制事件、终端输入、任务事件。
-- 局域网内可用 mDNS/局域网广播发现；失败时使用邀请码手动连接。
-- 信令 MVP 可由测试端本地启动轻量 HTTP/WebSocket 服务。
-
-权限级别：
-
-- `viewer`：只能看镜像和任务状态。
-- `mirror-control`：可控制镜像。
-- `terminal-read`：可查看终端输出。
-- `terminal-control`：可输入终端。
-- `diagnostic-runner`：可执行低风险诊断。
-- `admin`：可执行高风险操作，但仍需测试端确认。
-
-安全要求：
-
-- 邀请码短时有效。
-- 会话内显示远端身份。
-- 测试端一键断开。
-- 所有远端命令进入审计。
-- 默认不同意 destructive 操作。
-
-### 6.7 AI Hub
-
-职责：
-
-- 管理 Provider。
-- 提供 Chat。
-- 管理 Agent 工具调用。
-- 维护会话和上下文。
-
-Provider 模型：
-
-```ts
-interface ModelProvider {
-  id: string;
-  name: string;
-  kind: 'openai-compatible' | 'anthropic-compatible' | 'local-compatible';
-  baseUrl: string;
-  apiKeyRef: string;
-  models: ModelInfo[];
-  defaultModelId?: string;
-}
-```
-
-Agent 调用流程：
+内置工具：
+
+- `device.list`
+- `device.profile.read`
+- `command.executeReadOnly`
+- `logcat.capture`
+- `bugreport.capture`
+- `perfetto.capture`
+- `dumpsys.capture`
+- `artifact.search`
+- `artifact.summarize`
+- `script.generateDraft`
+- `script.runRegression`
+- `issuePackage.create`
+- `issueDraft.create`
+- `symbolication.run`
+- `integration.submitIssue`
+
+### 19.4 Agent 执行循环
+
+流程：
 
 1. 用户输入问题。
-2. AI Hub 发送上下文和可用 tool schema。
-3. 模型返回 tool call。
-4. Tool Policy 判断风险。
-5. 只读工具可直接执行。
-6. 写入/危险/破坏性工具显示审批 UI。
-7. Rust Core 执行工具。
-8. 工具结果写入会话、审计和 EvidenceRef。
-9. 模型生成带证据引用的最终回复。
+2. Agent 读取当前上下文摘要。
+3. 模型选择工具。
+4. Tool Policy 校验权限和风险。
+5. 必要时发审批。
+6. 执行工具。
+7. 工具输出写入 EvidenceRef。
+8. Agent 输出证据化回答。
 
-工具分层：
-
-- Read tools：设备状态、日志摘要、文件列表、命令 dry-run。
-- Diagnostic tools：抓日志、抓 trace、抓 bugreport。
-- Action tools：点击、输入、安装、清数据、重启。
-- Dangerous tools：fastboot、flash、erase、wipe、root/remount。
-
-证据模式：
-
-- 默认系统提示要求输出“结论、证据、已执行动作、未验证项”。
-- 每个关键结论必须引用 EvidenceRef；无法引用时标记为假设。
-- Agent 不直接读取未脱敏问题包外传给第三方模型；外发上下文由用户确认。
-
-MCP：
-
-- 可支持 MCP server 接入，但必须通过权限映射。
-- 不允许 MCP server 获得无限本机命令执行能力。
-- STDIO 类工具需要命令 allowlist 和参数校验。
-
-### 6.8 Settings
-
-职责：
-
-- ADB / fastboot / scrcpy / perfetto 路径配置。
-- Provider 配置。
-- API key 安全存储。
-- 主题、快捷键、布局。
-- 远程协作策略。
-- Agent 权限策略。
-- 诊断包保存路径与脱敏规则。
-- 符号文件、mapping 文件和 Issue Package 保存路径。
-- 外部缺陷系统连接配置。
-- 工具自身诊断和日志保留策略。
-
-配置存储：
-
-- 普通配置：应用配置目录 JSON / SQLite。
-- 密钥：Windows Credential Manager 或 Tauri 安全存储插件。
-- 审计日志：本地 append-only 文件或 SQLite 表。
-
-## 7. IPC 设计
-
-Tauri command 原则：
-
-- 所有入参有 schema。
-- 所有长任务返回 task id。
-- 所有 stream 通过 event 订阅。
-- 错误返回结构化 code。
-
-示例：
-
-```ts
-interface ApiError {
-  code: string;
-  message: string;
-  detail?: unknown;
-  recoverable: boolean;
-  suggestedAction?: string;
-}
-
-interface TaskEvent {
-  taskId: string;
-  type: 'started' | 'stdout' | 'stderr' | 'progress' | 'artifact' | 'approval-required' | 'completed' | 'failed' | 'cancelled';
-  timestamp: string;
-  payload: unknown;
-}
-```
-
-关键命令：
-
-- `device_list`
-- `device_watch_start`
-- `command_run`
-- `command_spawn`
-- `terminal_create`
-- `terminal_write`
-- `mirror_start`
-- `mirror_stop`
-- `diagnostic_run_recipe`
-- `session_start`
-- `session_stop`
-- `issue_package_export`
-- `issue_package_import`
-- `symbolication_run`
-- `regression_run`
-- `integration_submit_issue`
-- `observability_export_self_diagnostics`
-- `script_start_recording`
-- `script_stop_recording`
-- `script_run`
-- `remote_create_invite`
-- `remote_join`
-- `ai_chat_send`
-- `agent_tool_approve`
-
-## 8. 权限模型
-
-权限维度：
-
-- Actor：local-user、remote-user、agent、recipe。
-- Tool：ADB、serial、fastboot、mirror、diagnostic、filesystem、package、remote。
-- Risk：read、write、dangerous、destructive。
-- Scope：device、session、artifact、workspace。
-
-默认策略：
-
-- local-user 可以执行 read/write，但 dangerous/destructive 需要确认。
-- remote-user 默认 read，需要测试端授权提升。
-- agent 默认 read，diagnostic 需要一次性授权，dangerous/destructive 每次授权。
-- recipe 按声明风险运行，用户执行前可查看步骤。
-
-审计字段：
-
-- actor
-- tool
-- request
-- riskLevel
-- approval
-- start/end time
-- exit code
-- output path
-- redaction status
-
-## 9. 数据与持久化
-
-建议使用 SQLite 存储：
-
-- device aliases
-- recent devices
-- command history
-- terminal sessions metadata
-- scripts
-- recipes
-- debug sessions
-- evidence index
-- issue packages metadata
-- regression reports
-- symbolication profiles
-- diagnostic artifacts metadata
-- AI conversations metadata
-- remote session audit
-- external integration accounts excluding secrets
-- self observability events
-- settings excluding secrets
-
-文件系统存储：
-
-- 大日志
-- bugreport zip
-- trace 文件
-- 截图/录屏
-- 导出的复现包
-- Issue Package zip
-- 符号化缓存
-- 客户端自身诊断包
-
-数据保留：
-
-- 默认保留最近 30 天诊断包。
-- 用户可固定重要产物。
-- 支持一键清理缓存。
-
-## 10. UI 技术设计
-
-### 10.1 Layout
-
-主框架：
-
-- `AppShell`
-- `Sidebar`
-- `DeviceStatusBar`
-- `DockWorkspace`
-- `TaskBar`
-- `CommandPalette`
-
-主要视图：
-
-- `DeviceView`
-- `MirrorPanel`
-- `TerminalPanel`
-- `LogcatPanel`
-- `DiagnosticPanel`
-- `ScriptPanel`
-- `RemotePanel`
-- `AiChatPanel`
-- `SessionTimelinePanel`
-- `IssuePackagePanel`
-- `RegressionReportPanel`
-- `IntegrationPanel`
-- `SelfDiagnosticsPanel`
-- `SettingsPanel`
-
-### 10.2 现代工具型 UI 规范
-
-- 面板半径不超过 8px。
-- 工具按钮使用图标和 tooltip。
-- 高频操作放工具栏，低频操作放菜单。
-- 表格、列表和日志优先虚拟滚动。
-- 状态颜色语义固定：connected、warning、danger、running、muted。
-- 大段解释文字只放在空状态或帮助抽屉，不占据工作区主面积。
-- 禁止营销式 hero、装饰性渐变、纯展示卡片首页。
-
-### 10.3 状态同步
-
-- 设备状态由 Rust Core 推送，前端只做缓存。
-- 长任务状态由 task event 驱动。
-- Agent tool call 状态与 task 状态统一显示。
-- 远程会话状态常驻顶部或底部状态栏。
-- Debug Session 作为工作区上下文，所有相关事件写入 SessionTimelinePanel。
-
-## 11. 诊断 Recipe 设计
-
-Recipe 步骤类型：
-
-- `command`
-- `parallel`
-- `wait`
-- `pull`
-- `captureScreenshot`
-- `recordScreen`
-- `perfetto`
-- `bugreport`
-- `logcat`
-- `dumpsys`
-- `packageInfo`
-- `redact`
-- `symbolicate`
-- `correlateTimeline`
-- `createIssuePackage`
-- `runRegression`
-- `submitIssue`
-- `zip`
-
-示例：
-
-```json
-{
-  "id": "collect-crash-package",
-  "name": "一键 Crash 包",
-  "category": "crash",
-  "riskLevel": "read",
-  "steps": [
-    { "type": "logcat", "args": ["-b", "all", "-d"], "output": "logcat/all.txt" },
-    { "type": "command", "kind": "adb-shell", "argv": ["ls", "-R", "/data/tombstones"], "output": "tombstones/list.txt" },
-    { "type": "bugreport", "output": "bugreport/" },
-    { "type": "dumpsys", "service": "dropbox", "output": "dumpsys/dropbox.txt" },
-    { "type": "captureScreenshot", "output": "screenshots/current.png" },
-    { "type": "redact" },
-    { "type": "zip" }
-  ]
-}
-```
-
-## 12. Issue Package 与证据索引
-
-Issue Package 目录结构：
+输出格式：
 
 ```text
-issue-packages/
-  yyyyMMdd-HHmmss-deviceAlias-issueTitle/
-    manifest.json
-    device-profile.json
-    build-info.json
-    debug-session.json
-    evidence-index.json
-    agent-summary.md
-    regression-report.json
-    scripts/
-    artifacts/
-    attachments/
+结论：
+证据：
+已执行动作：
+未验证项：
+建议下一步：
 ```
 
-规则：
+### 19.5 MCP 扩展
 
-- `manifest.json` 是导入入口，记录版本、schema、生成工具版本和脱敏状态。
-- `debug-session.json` 保存完整 SessionEvent 列表。
-- `evidence-index.json` 只保存证据索引和文件相对路径，不复制大段日志内容。
-- 导出前执行脱敏，导入时显示脱敏状态和缺失文件。
-- 任何 Agent 结论和缺陷摘要都必须引用 evidence id。
+可支持 MCP server，但必须经过本地安全壳：
 
-## 13. 符号化与反混淆
+- MCP tool 导入时映射到 AgentTool。
+- 要求声明 riskLevel 和 permission。
+- 外部 MCP 不允许直接执行本机命令。
+- MCP tool 输出进入审计和脱敏流程。
 
-Java/Kotlin：
+## 20. ROM 与 App 增强
 
-- 支持 ProGuard/R8 mapping 文件。
-- 输入为 logcat、crash stack 或 Issue Package 中的堆栈片段。
-- 输出保留原始堆栈、反混淆堆栈、mapping 文件 hash 和匹配包名/版本。
+### 20.1 ROM Hub
+
+能力：
+
+- fastboot 状态和 getvar。
+- 分区信息查看。
+- SELinux AVC 聚合。
+- tombstone 解析。
+- pstore / ramoops / dmesg 采集。
+- framework service dumpsys 快捷模板。
+- Winscope 采集入口。
+- CTS / GTS / Tradefed 命令模板。
+
+### 20.2 Symbolication
+
+Java / Kotlin：
+
+- 输入 stacktrace。
+- 输入 ProGuard / R8 mapping。
+- 输出反混淆结果。
+- 记录 mapping hash。
 
 Native：
 
-- 支持 tombstone、addr2line/llvm-symbolizer 适配、so 搜索路径和 build id 匹配。
-- 输出保留原始 backtrace、符号化 backtrace、未匹配帧和符号路径。
+- 解析 tombstone。
+- 匹配 build id。
+- 查找 so 符号目录。
+- addr2line / llvm-symbolizer。
+- 输出置信度。
 
-Kernel/vendor：
+Kernel / vendor：
 
-- 支持 vmlinux、System.map、vendor 符号路径配置。
-- 输出必须记录 build fingerprint、kernel version 和符号匹配置信息。
+- vmlinux / System.map / vendor symbols。
+- build fingerprint 绑定。
+- 结果缓存。
 
-## 14. 外部缺陷系统集成
+### 20.3 Package Hub
 
-支持对象：
+能力：
 
-- Jira
-- 禅道
-- TAPD
-- GitHub Issues
-- GitLab Issues
+- package list。
+- install / uninstall / downgrade approval。
+- permission / appops。
+- run-as 数据导出。
+- SharedPreferences / database 查看。
+- 非 debuggable 限制提示。
 
-提交内容：
+## 21. 外部集成
 
-- 标题、环境、复现步骤、实际结果、期望结果。
-- Issue Package 摘要。
-- 关键证据引用。
-- 可选附件上传。
+集成目标：
 
-安全规则：
+- Jira。
+- 禅道。
+- TAPD。
+- GitHub Issues。
+- GitLab Issues。
 
-- 提交前显示预览。
-- API token 使用安全存储。
-- 大附件可配置为仅上传摘要或本地路径说明。
-- 外部系统失败不影响本地 Issue Package 生成。
+提交前流程：
 
-## 15. 工具自身可观测性
+1. 生成 payload preview。
+2. 展示标题、描述、字段、附件。
+3. 执行脱敏。
+4. 用户确认。
+5. 调用外部 API。
+6. 保存 issue URL 和提交审计。
 
-记录内容：
+默认 dry-run：
 
-- ADB / fastboot / scrcpy / perfetto 调用耗时、退出码和错误分类。
-- 远程协作信令、连接、断线和权限变化。
-- Provider 连通性、Agent tool 调用链和模型错误。
-- 客户端崩溃日志、前端错误、Rust panic 和性能指标。
+- 未配置凭据时只生成 payload preview。
+- Agent 发起提交也必须先 dry-run。
 
-导出：
+## 22. 存储设计
 
-- `observability_export_self_diagnostics` 生成客户端自身诊断包。
-- 默认不包含 API key、token、用户未脱敏日志或问题包正文。
-- 用户可在设置中控制保留时长和日志级别。
+Windows 默认路径：
 
-## 16. 远程协作数据流
+```text
+%APPDATA%/DroidDebugWorkbench/
+  config/
+  sessions/
+  artifacts/
+  issue-packages/
+  scripts/
+  recipes/
+  symbols/
+  logs/
+  cache/
+```
 
-测试端：
+当前仓库开发阶段使用项目内 `artifacts/` 作为产物目录。
 
-1. 创建 remote session。
-2. 生成邀请码。
-3. 启动信令服务。
-4. 发送镜像帧或共享 scrcpy 显示流。
-5. 接收开发端控制事件。
-6. 将控制事件转为本地工具调用。
-7. 写入审计。
+配置：
 
-开发端：
+- `settings.json`：非敏感设置。
+- `providers.json`：provider 元数据，不含明文 key。
+- `permissions.json`：权限策略。
+- `recipes/`：自定义 Recipe。
+- `scripts/`：ReplayScript。
 
-1. 输入邀请码加入。
-2. 建立 WebRTC peer connection。
-3. 查看镜像和终端。
-4. 请求权限提升。
-5. 发送控制事件或诊断请求。
+数据保留：
 
-关键限制：
+- 默认保留最近 30 天产物。
+- 用户可固定重要 Issue Package。
+- 支持按设备、会话、大小清理。
 
-- 开发端不能直接访问测试端文件系统。
-- 开发端不能绕过测试端权限模型。
-- 远程会话断开后 token 失效。
+## 23. 脱敏设计
 
-## 17. Agent 工具映射
+脱敏对象：
 
-PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表实现，而不是让模型直接执行 shell。
+- logcat。
+- bugreport。
+- dumpsys。
+- terminal output。
+- Agent prompt / response。
+- Issue Package README。
+- 外部缺陷 payload。
 
-工具示例：
+默认规则：
 
-- `device.list`
-- `device.describe`
-- `logcat.capture`
-- `logcat.search`
-- `timeline.correlate`
-- `session.export`
-- `issuePackage.create`
-- `issuePackage.import`
-- `symbolication.run`
-- `regression.run`
-- `bugreport.capture`
-- `perfetto.capture`
-- `dumpsys.run`
-- `screenshot.capture`
-- `screenrecord.start`
-- `script.run`
-- `recipe.run`
-- `terminal.runCommand`
-- `package.list`
-- `package.install`
-- `remote.requestPermission`
-- `integration.submitIssue`
-- `observability.exportSelfDiagnostics`
+- 手机号。
+- 邮箱。
+- IP 地址。
+- Wi-Fi SSID。
+- Android serial。
+- token / api key / bearer。
+- URL query 中的敏感字段。
 
-每个工具必须定义：
+脱敏报告：
 
-- input schema
-- output schema
-- risk level
-- permission
-- timeout
-- redaction policy
-- audit policy
-- dry-run support
-- evidence output policy
+```json
+{
+  "status": "redacted",
+  "rulesApplied": ["email", "token", "ip"],
+  "filesScanned": 12,
+  "matches": 38
+}
+```
 
-## 18. 错误处理
+## 24. 可观测性与自检
 
-错误码分类：
+自检项：
 
-- `ADB_NOT_FOUND`
-- `ADB_UNAUTHORIZED`
-- `ADB_OFFLINE`
-- `DEVICE_NOT_FOUND`
-- `MULTIPLE_DEVICES`
-- `SERIAL_PORT_BUSY`
-- `SCRCPY_START_FAILED`
-- `PERFETTO_UNSUPPORTED`
-- `BUGREPORT_TIMEOUT`
-- `REMOTE_SIGNAL_FAILED`
-- `REMOTE_PERMISSION_DENIED`
-- `AGENT_TOOL_DENIED`
-- `SECRET_STORE_FAILED`
-- `ISSUE_PACKAGE_INVALID`
-- `SYMBOLICATION_NO_MATCH`
-- `TIMELINE_CORRELATION_LOW_CONFIDENCE`
-- `INTEGRATION_SUBMIT_FAILED`
-- `SELF_DIAGNOSTICS_EXPORT_FAILED`
+- ADB 是否可用。
+- fastboot 是否可用。
+- scrcpy 是否可用。
+- perfetto 是否可用。
+- Tauri command gateway 是否可用。
+- Windows 凭据存储是否可用。
+- 当前设备数量。
+- 最近失败任务。
+- 产物目录是否可写。
 
-错误 UI：
+客户端日志：
 
-- 显示短错误。
-- 提供“查看详情”。
-- 提供建议动作。
-- 对可恢复错误提供一键修复。
+- app.log：普通运行日志。
+- audit.jsonl：审计。
+- crash.log：崩溃。
+- tasks.jsonl：任务状态。
 
-## 19. 测试策略
+日志策略：
 
-### 19.1 单元测试
+- 不记录密钥。
+- 输出体默认截断。
+- 可导出“客户端自身诊断包”。
 
-- ADB devices 输出解析。
-- fastboot devices 输出解析。
-- serial port 映射。
-- CommandRequest 风险分类。
-- Recipe schema 校验。
-- ReplayScript 坐标归一化。
-- Agent tool permission policy。
-- 日志脱敏规则。
-- Debug Session event ordering。
-- EvidenceRef path and range validation。
-- Issue Package manifest schema。
-- Symbolication profile matching。
+## 25. 安全模型
 
-### 19.2 集成测试
+Actor：
 
-- ADB path 配置和版本检测。
-- 启动/停止 adb server。
-- 启动/停止 scrcpy sidecar。
-- 串口 mock server。
-- Recipe dry-run。
-- Provider 连通性测试。
-- Issue Package export/import。
-- timeline correlation with synthetic logcat and trace fixtures。
-- external issue integration dry-run。
-- self diagnostics export。
+- local-user。
+- remote-user。
+- agent。
+- recipe。
+- system。
 
-### 19.3 端到端测试
+每个动作需要：
 
-- 连接设备 -> 打开镜像 -> 打开 shell -> 抓日志。
-- 录制脚本 -> 保存 -> 回放。
-- 创建远程邀请 -> 加入 -> 控制镜像 -> 执行诊断。
-- Chat -> Agent 抓日志 -> 总结异常。
-- Debug Session -> Issue Package 导出 -> 另一客户端导入 -> 查看证据索引。
-- 复现脚本 -> 修复后回归验证 -> 生成验证报告。
+- actor。
+- permission。
+- riskLevel。
+- target device。
+- audit event。
 
-### 19.4 人工验收
+安全边界：
 
-- Windows 10 / 11。
-- Android 8 到最新版本。
-- USB ADB、无线 ADB、串口转 USB。
-- 普通用户权限和管理员权限。
-- 企业防火墙或杀软场景。
+- UI 不能绕过 Core。
+- Agent 不能直接访问 shell。
+- Remote 不能直接访问 shell。
+- Recipe 不能隐藏 destructive 操作。
+- 外部 MCP 不能直接拿到本机命令能力。
+- 导入 Issue Package 不自动执行任何内容。
 
-## 20. 构建与发布
+## 26. 测试策略
 
-MVP 发布策略：
+### 26.1 前端单元测试
 
-- Windows x64 portable zip。
-- Windows installer：NSIS 或 MSI。
-- 工具二进制版本固定并校验 hash。
-- 首次启动检查工具可用性。
+覆盖：
+
+- 设备解析。
+- 权限策略。
+- 命令风险分类。
+- Recipe 可用性。
+- EvidenceRef。
+- Issue Package。
+- 脱敏。
+- 符号化。
+- UI 中文文案和乱码回归。
+
+当前命令：
+
+```powershell
+npm.cmd test
+```
+
+### 26.2 前端构建
+
+```powershell
+npm.cmd run build
+```
+
+覆盖：
+
+- TypeScript 类型。
+- Vite 生产构建。
+
+### 26.3 Rust 测试
+
+目标命令：
+
+```powershell
+cd src-tauri
+cargo test
+```
+
+当前环境要求：
+
+- Windows 需要安装 Visual Studio Build Tools。
+- 必须包含 Desktop development with C++，确保 `link.exe` 可用。
+
+### 26.4 真机 E2E
+
+真机验收矩阵：
+
+| 场景 | 依赖 | 验收 |
+| --- | --- | --- |
+| USB ADB 发现 | adb + 设备授权 | 设备列表显示真实 serial 和 model |
+| ADB shell | 在线设备 | 命令输出正常，风险审批生效 |
+| logcat | 在线设备 | 生成 logcat/all.txt |
+| bugreport | 在线设备 | 生成 bugreport zip 或目录 |
+| dumpsys | 在线设备 | 生成 service 输出 |
+| screenshot | 在线设备 | 生成 png |
+| screenrecord | 在线设备 | 生成 mp4 |
+| Perfetto | Android 11+ + perfetto | 生成 `.perfetto-trace` |
+| scrcpy | scrcpy + 在线设备 | 镜像和反控可用 |
+| ReplayScript | 在线设备 | 基础 tap / swipe / input 可回放 |
+| Remote | 两台同网段 PC | 邀请、加入、授权、断开、审计可用 |
+| Agent | Provider 凭据 | 工具调用、审批、证据化输出可用 |
+
+### 26.5 视觉验证
+
+每次 UI 大改需截图验证：
+
+- 1440 x 920 桌面。
+- 1280 x 720 最小窗口。
+- 中文不溢出。
+- 明亮主题可读。
+- 终端、日志、右侧面板不重叠。
+
+### 26.6 文档验证
+
+文档变更至少执行：
+
+```powershell
+git diff --check
+node -e "const fs=require('fs'); const bad=[0xfffd]; for (const f of ['doc/PRD.md','doc/TECHNICAL_DESIGN.md']) { const s=fs.readFileSync(f,'utf8'); if ([...s].some(ch => bad.includes(ch.codePointAt(0)))) throw new Error(f+' contains replacement character'); console.log(f, s.length); }"
+```
+
+## 27. 构建与发布
+
+开发：
+
+```powershell
+npm.cmd run dev
+npm.cmd run tauri dev
+```
+
+前端构建：
+
+```powershell
+npm.cmd run build
+```
+
+桌面打包：
+
+```powershell
+npm.cmd run tauri build
+```
+
+发布产物：
+
+- Windows NSIS installer。
+- Windows MSI。
+
+Sidecar 策略：
+
+- 开发阶段优先使用 PATH 或用户配置路径。
+- 发布阶段可选择随包分发 adb / fastboot / scrcpy / perfetto wrapper。
+- 随包分发必须记录版本、license 和更新策略。
 
 更新策略：
 
-- Tauri updater 可在后续版本接入。
-- 企业内部分发可先使用 GitHub Releases 或内网制品库。
+- MVP 可手动下载安装。
+- 后续可接入 Tauri updater。
 
-## 21. 风险与对策
+## 28. 性能设计
 
-### 21.1 scrcpy 嵌入难度
+目标：
 
-风险：把 scrcpy 画面嵌入 React 面板可能涉及窗口句柄、渲染和输入焦点问题。  
-对策：MVP 使用独立 scrcpy 窗口，由客户端管理生命周期和参数；后续再做嵌入式体验。
+- 首屏可交互小于 2 秒。
+- ADB 设备刷新小于 1 秒。
+- logcat 流 UI 不阻塞。
+- 单个日志视图支持百万行索引或虚拟滚动。
+- Recipe 长任务可取消。
+- Issue Package 导出大文件时不阻塞 UI。
 
-### 21.2 Agent 执行危险命令
+技术措施：
 
-风险：模型误调用破坏性命令。  
-对策：工具注册表、风险等级、审批、审计、dry-run、denylist。
+- 后端流式输出。
+- 前端虚拟列表。
+- 大文件只索引摘要和偏移，不一次性读入内存。
+- 产物写入后台 task。
+- Agent 只读取相关证据片段。
 
-### 21.3 远程协作安全边界
+## 29. 兼容性设计
 
-风险：开发端越权操作测试端电脑。  
-对策：只暴露客户端工具能力，不暴露整机远程桌面；权限由测试端审批。
+Android：
 
-### 21.4 Android 版本差异
+- Android 8+：基础 ADB、logcat、dumpsys。
+- Android 11+：Perfetto 体验更完整。
+- 不同 ROM 对 shell 权限、log buffer、bugreport 输出有差异，必须在能力画像中体现。
 
-风险：Perfetto、scrcpy 音频、无线调试、bugreport 行为随 Android 版本不同。  
-对策：能力检测 + 版本提示 + fallback。
+Windows：
 
-### 21.5 日志隐私
+- Windows 10 / 11。
+- PowerShell、cmd、Git Bash 不作为功能前提。
+- 串口设备需要系统驱动。
 
-风险：诊断包包含敏感信息。  
-对策：脱敏规则、导出预览、按团队策略启用强制脱敏。
+工具：
 
-### 21.6 符号化匹配不可靠
+- ADB / fastboot 可来自 Android SDK platform-tools。
+- scrcpy 可来自系统 PATH、用户配置路径或 sidecar。
+- perfetto 可来自设备端或本机工具。
 
-风险：mapping、so、vmlinux 或 vendor 符号与设备构建不匹配会产生误导性堆栈。
+## 30. 实施路线
 
-对策：必须记录匹配依据、hash、build fingerprint 和未匹配帧；低置信度结果在 UI 中标注。
+### Phase 0：文档与验收口径
 
-### 21.7 外部系统上传敏感信息
+- 完整 PRD。
+- 完整技术实现文档。
+- 实现状态文档。
+- 明确当前预览态和目标态差异。
 
-风险：Issue Package 附件可能包含隐私或公司敏感信息。
+### Phase 1：工作台骨架
 
-对策：提交前预览、脱敏状态提示、附件上传策略和默认最小化上传。
+- Tauri + React + TypeScript + Rust。
+- 明亮中文 UI。
+- 基础 store 和 API facade。
+- Browser fallback。
+- 基础领域模型和测试。
 
-## 22. PRD 映射
+### Phase 2：真实设备与终端
 
-| PRD 需求 | 技术模块 |
-| --- | --- |
-| ADB / 串口切换和终端 | Device Hub, Terminal Hub, Command Gateway |
-| 串口设备配置 / ADB 配置 | Settings, Device Hub, Serial Core |
-| QtScrcpy 类镜像和反控 | Mirror Hub, scrcpy sidecar |
-| 录制和执行脚本 | Script Hub, ReplayScript |
-| 局域网远程控制 | Remote Hub, WebRTC, Permission Policy |
-| Cherry Studio 类 Chat / Provider / Agent | AI Hub, Provider Manager, Agent Tool Registry |
-| 一键日志 / trace / 自定义操作 | Diagnostic Hub, DebugRecipe |
-| Debug Session / Issue Package / 证据索引 | Session Hub, Report Hub, EvidenceRef |
-| 符号化与反混淆 | Symbolication Core, Issue Package |
-| 回归验证 | Script Hub, RegressionReport |
-| App Inspection | Package Hub, App Data Inspectors |
-| 外部缺陷系统集成 | Integration Hub |
-| 工具自身可观测性 | Observability Core |
-| ROM / App / QA 增强 | ROM Hub, Package Hub, Lab Hub, Report Hub |
-| 模块化 | feature modules, Rust Core domains |
-| Agent 使用所有功能 | Unified Tool Registry + permission/audit |
-
-## 23. 实施顺序
-
-### Phase 0：仓库与文档
-
-- 落盘 PRD 和技术设计。
-- 建立基本 README 和工程计划。
-
-### Phase 1：工程骨架
-
-- Tauri + React + TypeScript 初始化。
-- Rust Core 基础 IPC。
-- AppShell、Sidebar、DeviceStatusBar。
-
-### Phase 2：设备与终端
-
-- ADB path 配置。
-- `adb devices` 解析。
-- Terminal Hub。
-- 串口枚举与连接。
+- 生产级 ADB adapter。
+- fastboot adapter。
+- 串口 adapter。
+- 终端多 tab 和流式输出。
+- 命令风险、审批、审计闭环。
 
 ### Phase 3：镜像与诊断
 
 - scrcpy sidecar。
-- 一键 logcat。
-- 一键 bugreport。
-- 一键 Perfetto。
-- 诊断产物目录。
-- Debug Session 基础事件写入。
+- 镜像生命周期管理。
+- logcat / bugreport / dumpsys / screenshot / screenrecord。
+- Perfetto trace 模板和真实采集。
+- Artifact metadata 和 evidence-index。
 
-### Phase 4：脚本
+### Phase 4：脚本与问题包
 
-- 录制事件模型。
-- ReplayScript 保存。
-- 基础回放。
-- 失败产物。
-- 回归验证报告。
+- ReplayScript 录制。
+- 回放引擎。
+- 断言和等待条件。
+- RegressionReport。
+- Issue Package 导出 / 导入。
 
-### Phase 4.5：问题包与证据索引
+### Phase 5：局域网远程协作
 
-- Issue Package manifest。
-- evidence-index 生成。
-- 导出/导入。
-- timeline correlation。
-
-### Phase 5：远程
-
-- LAN invite。
-- WebRTC 连接。
-- 镜像观看和控制。
-- 终端代理和审计。
+- LAN discovery。
+- WebRTC data channel。
+- 邀请、加入、授权、降权、断开。
+- 远程终端和镜像控制代理。
+- 审计和异常恢复。
 
 ### Phase 6：AI Agent
 
-- Provider 配置。
+- Provider Manager。
 - Chat。
 - Tool Registry。
+- Tool calling。
 - 审批流。
-- 日志总结 Playbook。
-- 证据模式。
+- 证据化输出。
+- Playbook。
 
-### Phase 7：扩展能力
+### Phase 7：ROM / App / QA / 集成增强
 
 - Package Hub。
 - ROM Hub。
-- Lab Hub。
-- Report Hub。
-- Symbolication Core。
-- Integration Hub。
-- Observability Core。
+- native / kernel symbolication。
+- App Inspection。
+- 外部缺陷系统。
+- Lab 批量任务。
+- 客户端可观测性。
 
-## 24. 验收标准
+## 31. PRD 映射
 
-技术设计完成后，工程实现应能逐步验证：
+| PRD 需求 | 技术模块 |
+| --- | --- |
+| ADB / 串口连接切换和终端 | Device Hub、Serial Adapter、Terminal Hub、Command Gateway |
+| 串口设备配置 / ADB 配置 | Settings、Device Core、Serial Core、ADB Adapter |
+| QtScrcpy 类镜像和反控 | Mirror Hub、scrcpy sidecar、MirrorSession |
+| 录制和执行脚本 | Script Hub、ReplayScript、Replay Engine、RegressionReport |
+| 局域网远程协作 | Remote Hub、LAN discovery、WebRTC、Permission Policy、Audit |
+| Cherry Studio 类聊天 | AI Hub、Provider Manager、Chat Session |
+| Agent 操控工具能力 | Agent Tool Registry、Tool Policy、Command Gateway |
+| 一键日志 / trace / 自定义操作 | Diagnostic Hub、Recipe Engine、Artifact Store |
+| Android ROM 能力 | ROM Hub、fastboot、SELinux、tombstone、symbolication |
+| Android App 能力 | Package Hub、App Inspection、permission、run-as |
+| 测试工程能力 | ReplayScript、Issue Package、RegressionReport、Lab Hub |
+| 模块化 | feature modules、Rust Core services、typed IPC |
+| 默认明亮中文 UI | AppShell、styles、localization tests |
+| 证据闭环 | Debug Session、EvidenceRef、Issue Package |
+| 安全 | Permission Policy、Approval、Audit、Redaction |
 
-- 文档中每个 MVP 需求有对应模块。
-- 每个外部命令都经过 Command Gateway。
-- 每个 Agent tool 都有 schema、风险等级和审计。
-- 每个远程操作都能追踪 actor。
-- 每个诊断任务都有产物目录和 metadata。
-- UI 首屏是工具工作台，不是营销页。
-- Debug Session 记录关键用户操作、命令、Agent 调用和诊断任务。
-- Issue Package 可导出、可导入，并能查看证据索引。
-- Agent 关键结论必须引用 EvidenceRef 或明确标记为假设。
-- 回归验证能输出报告并关联失败证据。
+## 32. 验收标准
+
+完整实现后必须满足：
+
+- Windows 客户端可安装并启动。
+- 默认界面为明亮中文工具型工作台。
+- 连接真实 Android 设备后显示真实能力画像。
+- ADB / serial / fastboot 终端可用，危险命令有审批。
+- scrcpy 镜像和反控可用。
+- 一键 logcat、bugreport、Perfetto、截图、录屏能生成真实产物。
+- 反控过程可录制脚本并回放。
+- Debug Session 记录关键操作。
+- Issue Package 可导出、导入、查看证据索引。
+- 两台局域网 PC 可建立远程会话，并按权限控制镜像和终端。
+- 配置 Provider 后可聊天，Agent 可在审批后调用工具。
+- Agent 输出关键结论时引用 EvidenceRef。
+- 外部缺陷系统提交前有 dry-run 预览和脱敏。
+- 缺少设备或工具时 UI 明确提示，不伪装成功。
+
+## 33. 关键风险与应对
+
+| 风险 | 应对 |
+| --- | --- |
+| Windows 工具链不完整导致 Rust 构建失败 | 文档和自检提示安装 Visual Studio Build Tools C++ 工作负载 |
+| scrcpy 嵌入复杂 | MVP 使用独立窗口，后续再嵌入 |
+| Agent 越权执行危险命令 | Tool Policy、审批、denylist、audit、dry-run |
+| 远程协作越权 | 只暴露客户端内部能力，所有操作带 actor 和 permission |
+| 诊断包泄露隐私 | 默认脱敏、提交前预览、redaction report |
+| Android ROM 差异 | 能力画像、版本判断、fallback 和明确错误提示 |
+| 大日志卡顿 | 后端流式、索引、虚拟滚动、分段读取 |
+| 脚本回放不稳定 | selector 优先、坐标归一化、等待条件、失败证据 |
+
+## 34. 下一步工程优先级
+
+短期优先：
+
+1. 修复 / 确认 UTF-8 中文源文件显示与测试环境，避免乱码进入源码。
+2. 安装 MSVC Build Tools，解除 `cargo test` 阻塞。
+3. 接入真实 Android 设备，完成 ADB adapter E2E。
+4. 安装 scrcpy 并验证 mirror sidecar。
+5. 实现 terminal session 流式输出。
+6. 让 Recipe 真实生成 logcat / bugreport / screenshot。
+
+中期优先：
+
+1. 实现 ReplayScript 录制 / 回放。
+2. 实现 Issue Package 导入。
+3. 实现 WebRTC LAN 远控。
+4. 实现 Provider-backed Chat 和 tool calling。
+5. 实现 Perfetto trace 配置模板。
+
+长期优先：
+
+1. 嵌入式镜像。
+2. native / kernel 符号化。
+3. App Inspection。
+4. Lab 批量设备和稳定性任务。
+5. 外部缺陷系统生产提交。
