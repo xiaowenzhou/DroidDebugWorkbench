@@ -30,6 +30,41 @@ describe('workbench browser-mode workflows', () => {
     expect(submitted.status).toBe('dry-run');
   });
 
+  it('uses the shared command gateway contract in browser fallback mode', async () => {
+    const writeCommand = await workbenchApi.executeCommand('adb shell am start -n "com.example/.Login Activity"', 'demo-adb-001');
+    expect(writeCommand.argv).toEqual(['adb', 'shell', 'am', 'start', '-n', 'com.example/.Login Activity']);
+    expect(writeCommand.riskLevel).toBe('write');
+    expect(writeCommand.requiresApproval).toBe(false);
+
+    const dangerousCommand = await workbenchApi.executeCommand('adb shell setprop persist.demo 1', 'demo-adb-001');
+    expect(dangerousCommand.status).toBe('blocked');
+    expect(dangerousCommand.riskLevel).toBe('dangerous');
+    expect(dangerousCommand.stderr).toContain('本地明确确认');
+
+    const fastbootFlash = await workbenchApi.executeCommand('fastboot -s ABC123 flash boot boot.img', 'demo-adb-001');
+    expect(fastbootFlash.status).toBe('blocked');
+    expect(fastbootFlash.riskLevel).toBe('destructive');
+  });
+
+  it('returns diagnostic artifacts with metadata and evidence index in fallback mode', async () => {
+    const artifact = await workbenchApi.runRecipe('collect-issue-package', 'demo-adb-001');
+
+    expect(artifact.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining(['metadata.json', 'evidence-index.json', 'issue-package/manifest.json']),
+    );
+    expect(artifact.timeline?.length).toBeGreaterThan(0);
+    expect(artifact.summary).toContain('证据索引');
+  });
+
+  it('reports the PRD self-diagnostics checklist in fallback mode', async () => {
+    const diagnostics = await workbenchApi.getSelfDiagnostics();
+    const joined = diagnostics.join('\n');
+
+    for (const label of ['ADB', 'fastboot', 'scrcpy', 'Perfetto', '命令网关', '安全存储', '在线设备', '最近失败任务', '产物目录']) {
+      expect(joined).toContain(label);
+    }
+  });
+
   it('returns readable Chinese Agent fallback text', async () => {
     const output = await workbenchApi.runAgentPrompt('分析当前崩溃');
     expect(output).toContain('结论');

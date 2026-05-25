@@ -57,6 +57,10 @@ describe('localized workbench data', () => {
     expect(backendSource).toContain('一键 Logcat');
     expect(backendSource).toContain('自检');
     expect(backendSource).toContain('本地明确确认');
+    expect(backendSource).toContain('fastboot 可用');
+    expect(backendSource).toContain('在线设备数量');
+    expect(backendSource).toContain('安全存储');
+    expect(backendSource).toContain('产物目录可写');
     expect(backendSource).not.toMatch(mojibakePattern);
 
     for (const oldEnglish of [

@@ -2,13 +2,16 @@ import {
   demoAgentTools,
   demoArtifacts,
   demoDevices,
+  demoEvents,
   demoIssuePackage,
   demoRecipes,
   demoReplayScripts,
   demoSession,
 } from './fixtures';
+import { classifyCommandRisk, parseCommandLine } from '../domain';
 import type {
   AgentTool,
+  ArtifactFile,
   CommandExecutionResult,
   DebugRecipe,
   DebugSession,
@@ -47,6 +50,48 @@ async function callBackend<T>(command: string, args: Record<string, unknown> | u
   }
 }
 
+function artifactFile(path: string, kind: ArtifactFile['kind'], sizeBytes = 256): ArtifactFile {
+  return { path, kind, sizeBytes };
+}
+
+function fallbackRecipeFiles(recipeId: string): ArtifactFile[] {
+  const files = [
+    artifactFile('metadata.json', 'metadata'),
+    artifactFile('evidence-index.json', 'evidence'),
+  ];
+
+  if (recipeId.includes('logcat') || recipeId.includes('crash') || recipeId === 'collect-issue-package') {
+    files.push(artifactFile('logcat/all.txt', 'logcat', 1024));
+  }
+
+  if (recipeId.includes('bugreport') || recipeId.includes('crash') || recipeId === 'collect-issue-package') {
+    files.push(artifactFile('bugreport/bugreport.txt', 'bugreport', 1024));
+  }
+
+  if (recipeId.includes('perfetto') || recipeId.includes('performance') || recipeId.includes('graphics')) {
+    files.push(artifactFile('traces/main.perfetto-trace', 'trace', 1024));
+  }
+
+  if (recipeId.includes('screenshot') || recipeId.includes('crash') || recipeId === 'collect-issue-package') {
+    files.push(artifactFile('screenshots/current.txt', 'screenshot', 128));
+  }
+
+  if (recipeId === 'collect-issue-package') {
+    files.push(artifactFile('issue-package/manifest.json', 'manifest', 512));
+  }
+
+  if (recipeId === 'collect-regression-report') {
+    files.push(artifactFile('regression-report.json', 'report', 512));
+  }
+
+  return files;
+}
+
+function classifyFallbackCommand(argv: string[]): CommandExecutionResult['riskLevel'] {
+  const commandArgv = argv[0] === 'adb' ? argv.slice(1) : argv;
+  return classifyCommandRisk(commandArgv);
+}
+
 export const workbenchApi = {
   listDevices: () => callBackend<DeviceRef[]>('list_devices', undefined, () => demoDevices),
   listRecipes: () => callBackend<DebugRecipe[]>('list_recipes', undefined, () => demoRecipes),
@@ -63,7 +108,10 @@ export const workbenchApi = {
       deviceId,
       createdAt: new Date().toISOString(),
       status: 'success',
-      summary: `已生成 ${recipeId} 诊断产物（预览模式）。`,
+      rootDir: `artifacts/preview-${recipeId}`,
+      files: fallbackRecipeFiles(recipeId),
+      timeline: demoEvents,
+      summary: `已生成 ${recipeId} 诊断产物（预览模式），包含 metadata、证据索引和时间线。`,
     })),
   runAgentPrompt: (prompt: string) =>
     callBackend<string>('run_agent_prompt', { prompt }, () =>
@@ -76,8 +124,9 @@ export const workbenchApi = {
     ),
   executeCommand: (commandLine: string, deviceId?: string) =>
     callBackend<CommandExecutionResult>('execute_command', { commandLine, deviceId }, () => {
-      const argv = commandLine.trim().split(/\s+/).filter(Boolean);
-      const requiresApproval = /\b(flash|wipe|erase|pm\s+clear|uninstall)\b/i.test(commandLine);
+      const argv = parseCommandLine(commandLine);
+      const riskLevel = classifyFallbackCommand(argv);
+      const requiresApproval = riskLevel === 'dangerous' || riskLevel === 'destructive';
       return {
         commandLine,
         argv,
@@ -85,7 +134,7 @@ export const workbenchApi = {
         exitCode: requiresApproval ? undefined : 0,
         stdout: requiresApproval ? '' : `浏览器预览模式已通过命令网关排队：\n${commandLine}`,
         stderr: requiresApproval ? '该命令需要本地明确确认后才能执行。' : '',
-        riskLevel: requiresApproval ? 'destructive' : 'read',
+        riskLevel,
         requiresApproval,
         durationMs: 0,
       };
@@ -123,8 +172,15 @@ export const workbenchApi = {
     })),
   getSelfDiagnostics: () =>
     callBackend<string[]>('self_diagnostics', undefined, () => [
-      '前端预览适配器已启用',
-      '浏览器模式不直接校验 ADB 路径',
-      '桌面运行时可通过 Tauri 管理 scrcpy sidecar',
+      'ADB 可用：浏览器预览模式不直接探测，桌面运行时通过 Tauri 校验。',
+      'fastboot 可用：浏览器预览模式不直接探测，桌面运行时通过 Tauri 校验。',
+      'scrcpy 可用：浏览器预览模式不直接探测，桌面运行时可启动 sidecar。',
+      'Perfetto 可用：浏览器预览模式不直接探测，桌面运行时执行真实 trace 采集。',
+      'Tauri 命令网关：前端预览适配器已启用，桌面运行时必须经过 invoke 网关。',
+      `在线设备数量：${demoDevices.filter((device) => device.state === 'device').length}`,
+      '安全存储：浏览器预览不读取密钥，桌面运行时使用系统安全凭据或加密存储。',
+      '最近失败任务：无；失败任务会进入任务日志和恢复建议。',
+      '产物目录：预览模式写入虚拟 artifacts 路径，桌面运行时会校验目录可写。',
+      '自检不会输出 API key、Token 或其他敏感信息。',
     ]),
 };

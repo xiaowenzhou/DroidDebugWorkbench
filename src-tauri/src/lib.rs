@@ -377,9 +377,10 @@ fn classify_command_risk(argv: &[String]) -> &'static str {
         vec!["forward"],
     ];
 
-    if destructive
-        .iter()
-        .any(|pattern| contains_pattern(&normalized, pattern))
+    if is_fastboot_destructive(&normalized)
+        || destructive
+            .iter()
+            .any(|pattern| contains_pattern(&normalized, pattern))
     {
         "destructive"
     } else if dangerous
@@ -395,6 +396,11 @@ fn classify_command_risk(argv: &[String]) -> &'static str {
     } else {
         "read"
     }
+}
+
+fn is_fastboot_destructive(argv: &[String]) -> bool {
+    argv.first().map(String::as_str) == Some("fastboot")
+        && argv.iter().any(|part| part == "flash" || part == "erase")
 }
 
 fn should_inject_adb_serial(argv: &[String]) -> bool {
@@ -502,6 +508,31 @@ fn artifact_root(recipe_id: &str) -> PathBuf {
     ));
     let _ = fs::create_dir_all(&dir);
     dir
+}
+
+fn real_adb_device_count() -> usize {
+    command_output("adb", &["devices", "-l"])
+        .map(|output| parse_adb_devices(&output))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|device| device.state == "device")
+        .count()
+}
+
+fn artifact_dir_writable() -> bool {
+    let dir = PathBuf::from("artifacts");
+    if fs::create_dir_all(&dir).is_err() {
+        return false;
+    }
+
+    let probe = dir.join(".self-check-write");
+    match fs::write(&probe, "ok") {
+        Ok(()) => {
+            let _ = fs::remove_file(probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn write_artifact_file(root: &Path, relative_path: &str, content: &str) -> ArtifactFile {
@@ -1316,9 +1347,14 @@ fn run_agent_prompt(prompt: String) -> String {
 fn self_diagnostics() -> Vec<String> {
     vec![
         format!("ADB 可用：{}", tool_exists("adb")),
+        format!("fastboot 可用：{}", tool_exists("fastboot")),
         format!("scrcpy 可用：{}", tool_exists("scrcpy")),
         format!("Perfetto 可用：{}", tool_exists("perfetto")),
         "Tauri 命令网关已启用，自检通过基础通道。".into(),
+        "安全存储：当前版本尚未接入系统凭据库，自检不会读取或输出密钥。".into(),
+        format!("在线设备数量：{}", real_adb_device_count()),
+        "最近失败任务：暂无持久任务队列记录；后续会接入 tasks.jsonl。".into(),
+        format!("产物目录可写：{}", artifact_dir_writable()),
         "自检不会输出 API key、Token 或其他敏感信息。".into(),
     ]
 }

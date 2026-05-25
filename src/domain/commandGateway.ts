@@ -30,6 +30,10 @@ const WRITE_PATTERNS = [
 
 export function classifyCommandRisk(argv: string[]): RiskLevel {
   const normalized = argv.map((part) => part.toLowerCase());
+  if (isFastbootDestructive(normalized)) {
+    return 'destructive';
+  }
+
   if (DESTRUCTIVE_PATTERNS.some((pattern) => containsPattern(normalized, pattern))) {
     return 'destructive';
   }
@@ -40,6 +44,54 @@ export function classifyCommandRisk(argv: string[]): RiskLevel {
     return 'write';
   }
   return 'read';
+}
+
+function isFastbootDestructive(argv: string[]): boolean {
+  return argv[0] === 'fastboot' && argv.some((part) => part === 'flash' || part === 'erase');
+}
+
+export function parseCommandLine(commandLine: string): string[] {
+  const argv: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | undefined;
+  const source = commandLine.trim();
+
+  for (let index = 0; index < source.length; index += 1) {
+    const ch = source[index];
+    const next = source[index + 1];
+
+    if (ch === '\\' && quote && next === quote) {
+      current += next;
+      index += 1;
+      continue;
+    }
+
+    if ((ch === '"' || ch === "'") && !quote) {
+      quote = ch;
+      continue;
+    }
+
+    if (ch === quote) {
+      quote = undefined;
+      continue;
+    }
+
+    if (/\s/.test(ch) && !quote) {
+      if (current) {
+        argv.push(current);
+        current = '';
+      }
+      continue;
+    }
+
+    current += ch;
+  }
+
+  if (current) {
+    argv.push(current);
+  }
+
+  return argv;
 }
 
 export function createAdbCommandRequest(input: { deviceId?: string; argv: string[]; timeoutMs?: number; reason?: string }): CommandRequest {
