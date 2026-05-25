@@ -17,6 +17,7 @@ Droid Debug Workbench 是面向 Android ROM 工程师、Android App 工程师和
 - 更快复现问题：录制脚本、回放脚本、导出复现包。
 - 更快交给开发：测试端可发起局域网远程协助，开发直接看现象并操作终端。
 - 更快定位根因：一键日志、trace、dumpsys、bugreport、Agent 辅助分析。
+- 更快闭环问题：Debug Session 时间线、标准 Issue Package、回归验证和证据化 Agent 输出串起复现、定位、修复和验证。
 
 ## 2. 背景与参考
 
@@ -62,6 +63,7 @@ Android 官方 ADB 是用于与 Android 设备通信的通用命令行工具，�
 - 插件化扩展：一键操作、脚本、Agent tool、诊断模板都可扩展。
 - 离线可用：基础设备调试不依赖互联网。
 - 少依赖设备端安装：MVP 优先依赖 ADB、scrcpy、UIAutomator，不默认安装常驻 APK。
+- 证据优先：问题分析、Agent 结论和缺陷描述必须能回溯到日志行、命令、截图、trace 区间或脚本步骤。
 
 ## 5. UI / UX 需求
 
@@ -95,6 +97,7 @@ UI 必须符合现代工具类桌面客户端风格：
 - 一键操作执行前显示将运行的步骤，执行时显示实时日志，完成后生成产物摘要。
 - 镜像反控时可一键开始脚本录制，录制中的点击、滑动、按键、文本输入和终端命令进入同一时间线。
 - Agent 调用工具时展示工具名、参数摘要、风险级别和审批按钮。
+- Agent 输出问题判断时必须展示证据引用，例如日志片段、命令输出、trace 时间段、截图或诊断产物路径。
 - 远程控制时测试端始终可看到“谁在控制、正在做什么、可立即断开”。
 
 ## 6. 功能范围
@@ -117,6 +120,8 @@ UI 必须符合现代工具类桌面客户端风格：
 - 端口 forward/reverse 管理。
 - 设备健康检查：USB 调试、授权、无线端口、root、storage、battery。
 - 连接问题修复建议：kill-server、重新授权、切换 USB 模式、网络检查。
+- 设备能力画像：Android 版本、ABI、分辨率、刷新率、root、SELinux、build fingerprint、分区、scrcpy 能力、Perfetto 能力、无线调试状态、可用外部工具。
+- 能力画像驱动的一键操作可用性判断：不可执行的 Recipe 在执行前给出原因和替代方案。
 
 ### 6.2 终端模块
 
@@ -171,6 +176,7 @@ UI 必须符合现代工具类桌面客户端风格：
 - 等待条件：文本出现、包启动、Activity 切换、日志关键字出现。
 - 断言：截图相似、控件存在、命令输出匹配。
 - 脚本导出为问题复现包的一部分。
+- 回归验证模式：复现脚本可在修复后作为验证脚本执行，生成通过/失败、失败步骤、截图、日志窗口和环境差异报告。
 
 ### 6.5 远程协作模块
 
@@ -212,6 +218,8 @@ UI 必须符合现代工具类桌面客户端风格：
 - 读取诊断包摘要。
 - 生成复现脚本草稿。
 - 执行用户批准的一键操作。
+- 生成带证据引用的问题分析：每个结论关联日志行、命令输出、trace 时间段、截图、脚本步骤或诊断文件。
+- 基于 Issue Package 生成缺陷摘要、复现步骤、影响范围、疑似模块和后续排查建议。
 
 高风险工具必须二次确认：
 
@@ -222,6 +230,7 @@ UI 必须符合现代工具类桌面客户端风格：
 - MCP server 接入。
 - 本地知识库：历史问题、命令手册、ROM 日志模式。
 - Agent Playbook：Crash 分析、ANR 分析、启动慢分析、功耗分析、图形卡顿分析。
+- Agent 证据模式：默认要求模型回答包含“结论、证据、已执行动作、未验证项”，避免无证据判断。
 
 ### 6.7 一键诊断与自定义操作
 
@@ -242,6 +251,9 @@ UI 必须符合现代工具类桌面客户端风格：
 - 一键图形包：SurfaceFlinger、WindowManager、Winscope、frame stats。
 - 一键网络包：connectivity、netstats、iptables/nft、tcpdump 插件位。
 - 一键 OTA / 升级问题包：recovery log、last_kmsg/pstore、update_engine log。
+- 日志/trace 智能关联：将 logcat、bugreport、Perfetto、dumpsys、截图、录屏和用户操作按时间线对齐，自动标记 crash、ANR、binder timeout、input timeout、jank、thermal throttle、low memory、SELinux denied 等事件。
+- Debug Session 时间线：记录用户操作、镜像事件、终端命令、远程控制、Agent tool call、诊断任务和关键系统事件。
+- Issue Package 标准导出：包含设备画像、版本信息、Debug Session、复现脚本、日志、trace、截图、录屏、Agent 证据化总结、脱敏状态和导入说明。
 
 ### 6.8 文件与包管理
 
@@ -252,6 +264,7 @@ UI 必须符合现代工具类桌面客户端风格：
 - APK 安装：普通安装、覆盖安装、降级安装、split APK、AAB/bundletool 辅助。
 - 权限管理：runtime permission、appops、notification permission。
 - 应用数据：清数据、run-as、导出数据库、导出 shared prefs。
+- App Inspection 类能力：查看 debuggable 应用的数据库、SharedPreferences、网络请求线索、后台任务和进程状态；对非 debuggable 应用明确提示系统限制。
 
 危险操作必须审批。
 
@@ -263,6 +276,8 @@ UI 必须符合现代工具类桌面客户端风格：
 - recovery / sideload 状态识别。
 - SELinux AVC denied 聚合。
 - tombstone / native crash 解析。
+- native tombstone 符号化：支持配置符号目录、so 搜索路径、build id 匹配和符号化结果缓存。
+- kernel / vendor crash 符号化：支持配置 vmlinux、System.map、vendor 符号文件路径，并在产物中保留匹配信息。
 - kernel log / dmesg / pstore / ramoops 采集。
 - framework service 快捷 dumpsys。
 - binder、activity、window、input、surface、audio、power、thermal、display 诊断。
@@ -278,6 +293,7 @@ UI 必须符合现代工具类桌面客户端风格：
 - network security config 和代理状态提示。
 - app startup 采集。
 - method trace / heap dump / simpleperf 入口。
+- Java/Kotlin crash 反混淆：支持配置 ProGuard/R8 mapping 文件，将堆栈还原并保留原始堆栈。
 - shared prefs / sqlite 文件导出。
 - UI 层级快照。
 - logcat 智能过滤：package、pid、tag、level、正则。
@@ -287,11 +303,29 @@ UI 必须符合现代工具类桌面客户端风格：
 应该支持：
 
 - 测试用例步骤模板。
-- 复现包一键导出：脚本、日志、截图、录屏、设备信息、构建信息。
+- 复现包一键导出：脚本、日志、截图、录屏、设备信息、构建信息、Debug Session、Agent 证据化总结。
 - 缺陷描述助手：根据脚本和日志生成复现步骤、实际结果、期望结果。
 - 批量设备执行一键操作。
 - 稳定性测试辅助：monkey、重复回放、定时抓包、异常监控。
 - 环境检查：ADB 授权、系统版本、测试账号、网络、存储、电量。
+- 回归验证报告：基于脚本回放、断言、日志关键字和截图对比生成验证结果。
+- 外部缺陷系统集成：支持将 Issue Package 摘要、附件和复现步骤提交到 Jira、禅道、TAPD、GitHub Issues 或 GitLab Issues。
+
+### 6.12 问题闭环与报告能力
+
+必须支持：
+
+- Debug Session：用户开始一次调试会话后，系统统一记录操作、命令、日志关键事件、诊断任务、远程协作和 Agent 调用。
+- Issue Package：按固定目录结构导出问题包，并支持在另一个客户端导入查看。
+- 证据索引：问题包内每个结论必须能定位到原始证据文件、时间戳和来源。
+
+应该支持：
+
+- 日志/trace 时间线对齐和关键事件自动标注。
+- Java/Kotlin、native、kernel/vendor 三类符号化/反混淆配置。
+- 回归验证模式和验证报告。
+- 外部缺陷系统提交与附件同步。
+- 工具自身诊断：记录 ADB 调用耗时、scrcpy 启动失败原因、远程连接失败原因、Provider/Agent 调用历史、客户端崩溃日志和性能指标。
 
 ## 7. 模块划分
 
@@ -305,6 +339,7 @@ MVP 模块：
 6. Remote Hub：局域网远程协作。
 7. AI Hub：Provider、Chat、Agent 工具调用。
 8. Settings：工具路径、Provider、权限、主题、快捷键。
+9. Session & Report Hub：Debug Session、Issue Package、证据索引、回归验证报告。
 
 扩展模块：
 
@@ -327,6 +362,8 @@ MVP 必须能完成以下端到端场景：
 8. 测试人员发起局域网远程请求，开发人员加入并控制镜像与终端。
 9. 配置 OpenAI-compatible Provider，选择模型对话。
 10. Agent 在用户批准后抓取日志并总结异常线索。
+11. 结束调试后导出 Issue Package，包内包含 Debug Session 时间线、诊断产物、复现脚本和证据化 Agent 摘要。
+12. 修复后执行同一复现脚本进入回归验证模式，生成验证报告。
 
 ## 9. 成功指标
 
@@ -336,6 +373,8 @@ MVP 必须能完成以下端到端场景：
 - 录制脚本在同一设备回放成功率：基础交互大于 90%。
 - 局域网远程连接建立：同网段无防火墙阻断场景小于 20 秒。
 - 测试问题包可用率：开发能基于导出包判断下一步方向的比例大于 80%。
+- Issue Package 导入可用率：开发端导入后能看到时间线、关键证据和产物索引的比例大于 90%。
+- Agent 结论证据覆盖率：默认模式下关键结论带证据引用的比例大于 95%。
 
 ## 10. 权限与安全
 
@@ -346,6 +385,8 @@ MVP 必须能完成以下端到端场景：
 - API key 存储在系统安全凭据或加密存储中，不明文写入普通配置。
 - 诊断包导出前支持敏感信息脱敏：手机号、邮箱、token、Wi-Fi SSID、IP、序列号。
 - 自定义 Recipe 和 MCP 工具必须有权限声明。
+- 外部缺陷系统提交前必须显示将上传的字段和附件，并支持脱敏预览。
+- 工具自身诊断日志不得记录明文 API key、访问 token、用户隐私文本或未脱敏的问题包内容。
 
 ## 11. 非目标
 
@@ -376,7 +417,9 @@ MVP 不做以下能力：
 
 - 录制基础反控事件。
 - 脚本回放。
-- 复现包导出。
+- Debug Session 时间线。
+- Issue Package 导出和导入。
+- 回归验证报告。
 
 ### M4：远程协作
 
@@ -391,12 +434,14 @@ MVP 不做以下能力：
 - 工具注册表。
 - 日志抓取和异常总结。
 - 高风险审批。
+- Agent 证据模式和 Issue Package 摘要生成。
 
 ### M6：ROM / App / QA 增强
 
 - 包管理、权限管理、文件浏览。
 - ROM 诊断模板。
 - 批量设备和稳定性任务。
+- 符号化/反混淆、App Inspection、外部缺陷系统集成、工具自身诊断。
 
 ## 13. 验收清单
 
@@ -407,3 +452,4 @@ MVP 不做以下能力：
 - Agent 拥有全工具能力，但通过权限与审计约束。
 - 远程协作限定在客户端工作区内，避免误接管整台 PC。
 - Android ROM、App、测试三类用户均有专属增强能力。
+- Debug Session、Issue Package、证据索引、回归验证形成问题闭环。

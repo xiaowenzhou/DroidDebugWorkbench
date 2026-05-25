@@ -13,6 +13,7 @@ Droid Debug Workbench 的技术架构需要同时满足四类诉求：
 - 调试工具集成：可靠调用 ADB、fastboot、scrcpy、Perfetto、外部脚本和串口。
 - 实时交互：终端流、日志流、镜像控制、远程控制都需要低延迟和可取消。
 - Agent 安全：AI 可以调用工具，但每次调用都必须被 schema、权限、审计和风险等级约束。
+- 问题闭环：Debug Session、Issue Package、符号化、时间线关联、回归验证和证据化 Agent 输出需要共享同一套证据模型。
 
 ## 2. 推荐技术栈
 
@@ -107,11 +108,14 @@ DroidDebugWorkbench/
       device/
       terminal/
       mirror/
-      diagnostics/
-      script/
-      remote/
-      ai/
-      settings/
+        diagnostics/
+        script/
+        remote/
+        ai/
+        session/
+        report/
+        integrations/
+        settings/
     shared/
   src-tauri/
     src/
@@ -125,6 +129,11 @@ DroidDebugWorkbench/
         script/
         remote/
         ai/
+        session/
+        report/
+        symbolication/
+        integrations/
+        observability/
         audit/
       main.rs
     binaries/
@@ -161,7 +170,23 @@ interface DeviceRef {
   buildFingerprint?: string;
   rootState?: 'unknown' | 'none' | 'adb-root' | 'su';
   capabilities: string[];
+  profile?: DeviceCapabilityProfile;
   lastSeenAt: string;
+}
+```
+
+设备能力画像：
+
+```ts
+interface DeviceCapabilityProfile {
+  abi: string[];
+  screen?: { width: number; height: number; density: number; refreshRate?: number };
+  selinux?: 'enforcing' | 'permissive' | 'unknown';
+  partitions?: PartitionInfo[];
+  toolAvailability: Record<string, boolean>;
+  scrcpy: { available: boolean; version?: string; audio?: boolean; hid?: boolean };
+  perfetto: { available: boolean; sdkSupported: boolean; dataSources: string[] };
+  wirelessDebugging?: { paired: boolean; connected: boolean; port?: number };
 }
 ```
 
@@ -259,6 +284,85 @@ interface AgentTool {
 }
 ```
 
+### 5.7 DebugSession
+
+```ts
+type SessionEventKind =
+  | 'user-action'
+  | 'mirror-event'
+  | 'terminal-command'
+  | 'log-event'
+  | 'trace-marker'
+  | 'diagnostic-task'
+  | 'remote-action'
+  | 'agent-tool-call'
+  | 'artifact-created'
+  | 'assertion-result';
+
+interface DebugSession {
+  id: string;
+  deviceId: string;
+  startedAt: string;
+  endedAt?: string;
+  title?: string;
+  events: SessionEvent[];
+  artifacts: DiagnosticArtifact[];
+  issuePackageId?: string;
+}
+
+interface SessionEvent {
+  id: string;
+  timestamp: string;
+  kind: SessionEventKind;
+  source: 'local-user' | 'remote-user' | 'agent' | 'recipe' | 'system';
+  title: string;
+  evidenceRefs: EvidenceRef[];
+  payload?: unknown;
+}
+```
+
+### 5.8 IssuePackage
+
+```ts
+interface IssuePackage {
+  id: string;
+  createdAt: string;
+  deviceProfile: DeviceCapabilityProfile;
+  buildInfo: Record<string, string>;
+  sessionId: string;
+  replayScriptIds: string[];
+  artifactIds: string[];
+  evidenceIndex: EvidenceRef[];
+  agentSummary?: EvidenceBackedSummary;
+  redactionStatus: 'not-run' | 'redacted' | 'partially-redacted';
+}
+
+interface EvidenceRef {
+  id: string;
+  type: 'log-line' | 'command-output' | 'trace-slice' | 'screenshot' | 'screenrecord' | 'script-step' | 'artifact-file';
+  artifactId?: string;
+  filePath?: string;
+  timestamp?: string;
+  lineRange?: [number, number];
+  traceTimeRangeNs?: [number, number];
+  description?: string;
+}
+```
+
+### 5.9 SymbolicationProfile
+
+```ts
+interface SymbolicationProfile {
+  id: string;
+  name: string;
+  kind: 'proguard-r8' | 'native' | 'kernel-vendor';
+  buildFingerprint?: string;
+  appPackage?: string;
+  paths: string[];
+  matchRules: Record<string, string>;
+}
+```
+
 ## 6. 模块设计
 
 ### 6.1 Device Hub
@@ -270,6 +374,7 @@ interface AgentTool {
 - 执行 `fastboot devices`。
 - 枚举串口。
 - 合并设备状态为统一 DeviceRef。
+- 采集和刷新 DeviceCapabilityProfile。
 - 提供设备选择、别名、最近使用记录。
 
 关键接口：
@@ -282,6 +387,8 @@ interface AgentTool {
 - `adb.pair(host, port, code)`
 - `adb.connect(host, port)`
 - `serial.listPorts()`
+- `device.profile(deviceId)`
+- `device.refreshCapabilities(deviceId)`
 
 状态机：
 
@@ -362,6 +469,8 @@ MVP 方案：
 - 执行 DebugRecipe。
 - 采集 logcat、bugreport、Perfetto、dumpsys、截图、录屏等产物。
 - 管理产物目录、摘要、脱敏和导出。
+- 将产物写入 Debug Session 时间线和证据索引。
+- 对 logcat、Perfetto、bugreport、dumpsys 和用户操作做时间线对齐。
 
 内置 Recipe：
 
@@ -373,6 +482,8 @@ MVP 方案：
 - `collect-performance-package`
 - `collect-power-package`
 - `collect-graphics-package`
+- `collect-issue-package`
+- `collect-regression-report`
 
 产物目录：
 
@@ -382,6 +493,7 @@ artifacts/
     metadata.json
     timeline.json
     commands.log
+    evidence-index.json
     logcat/
     bugreport/
     traces/
@@ -409,6 +521,13 @@ logcat：
 - 支持按时间、包名、pid、tag、level 过滤。
 - 支持 ring buffer 和持续采集。
 
+时间线关联：
+
+- 统一将事件时间标准化为设备时间、主机时间和单调时间三种字段。
+- 对 logcat 行、Perfetto slice、终端命令、截图和录屏片段建立 EvidenceRef。
+- 自动标记 crash、ANR、binder timeout、input timeout、jank、thermal throttle、low memory、SELinux denied。
+- 关联失败时保留原始时间戳，并在 Issue Package 中标注可信度。
+
 ### 6.5 Script Hub
 
 职责：
@@ -417,6 +536,7 @@ logcat：
 - 保存 ReplayScript。
 - 回放脚本。
 - 失败时生成定位信息。
+- 支持回归验证模式并输出验证报告。
 
 录制来源：
 
@@ -431,6 +551,12 @@ logcat：
 2. 如果 selector 缺失或查找失败，按归一化坐标回放。
 3. 每个关键步骤后允许等待条件。
 4. 失败时截图、保存当前 Activity、保存 logcat 窗口。
+
+回归验证：
+
+- ReplayScript 可绑定断言、允许失败阈值和期望日志模式。
+- 执行结果生成 `RegressionReport`，包含通过/失败、失败步骤、环境差异、截图和日志证据。
+- 验证报告可进入 Issue Package，用于证明问题已修复或仍可复现。
 
 MVP 限制：
 
@@ -501,8 +627,8 @@ Agent 调用流程：
 5. 只读工具可直接执行。
 6. 写入/危险/破坏性工具显示审批 UI。
 7. Rust Core 执行工具。
-8. 工具结果写入会话和审计。
-9. 模型生成最终回复。
+8. 工具结果写入会话、审计和 EvidenceRef。
+9. 模型生成带证据引用的最终回复。
 
 工具分层：
 
@@ -510,6 +636,12 @@ Agent 调用流程：
 - Diagnostic tools：抓日志、抓 trace、抓 bugreport。
 - Action tools：点击、输入、安装、清数据、重启。
 - Dangerous tools：fastboot、flash、erase、wipe、root/remount。
+
+证据模式：
+
+- 默认系统提示要求输出“结论、证据、已执行动作、未验证项”。
+- 每个关键结论必须引用 EvidenceRef；无法引用时标记为假设。
+- Agent 不直接读取未脱敏问题包外传给第三方模型；外发上下文由用户确认。
 
 MCP：
 
@@ -528,6 +660,9 @@ MCP：
 - 远程协作策略。
 - Agent 权限策略。
 - 诊断包保存路径与脱敏规则。
+- 符号文件、mapping 文件和 Issue Package 保存路径。
+- 外部缺陷系统连接配置。
+- 工具自身诊断和日志保留策略。
 
 配置存储：
 
@@ -574,6 +709,14 @@ interface TaskEvent {
 - `mirror_start`
 - `mirror_stop`
 - `diagnostic_run_recipe`
+- `session_start`
+- `session_stop`
+- `issue_package_export`
+- `issue_package_import`
+- `symbolication_run`
+- `regression_run`
+- `integration_submit_issue`
+- `observability_export_self_diagnostics`
 - `script_start_recording`
 - `script_stop_recording`
 - `script_run`
@@ -620,9 +763,16 @@ interface TaskEvent {
 - terminal sessions metadata
 - scripts
 - recipes
+- debug sessions
+- evidence index
+- issue packages metadata
+- regression reports
+- symbolication profiles
 - diagnostic artifacts metadata
 - AI conversations metadata
 - remote session audit
+- external integration accounts excluding secrets
+- self observability events
 - settings excluding secrets
 
 文件系统存储：
@@ -632,6 +782,9 @@ interface TaskEvent {
 - trace 文件
 - 截图/录屏
 - 导出的复现包
+- Issue Package zip
+- 符号化缓存
+- 客户端自身诊断包
 
 数据保留：
 
@@ -662,6 +815,11 @@ interface TaskEvent {
 - `ScriptPanel`
 - `RemotePanel`
 - `AiChatPanel`
+- `SessionTimelinePanel`
+- `IssuePackagePanel`
+- `RegressionReportPanel`
+- `IntegrationPanel`
+- `SelfDiagnosticsPanel`
 - `SettingsPanel`
 
 ### 10.2 现代工具型 UI 规范
@@ -680,6 +838,7 @@ interface TaskEvent {
 - 长任务状态由 task event 驱动。
 - Agent tool call 状态与 task 状态统一显示。
 - 远程会话状态常驻顶部或底部状态栏。
+- Debug Session 作为工作区上下文，所有相关事件写入 SessionTimelinePanel。
 
 ## 11. 诊断 Recipe 设计
 
@@ -697,6 +856,11 @@ Recipe 步骤类型：
 - `dumpsys`
 - `packageInfo`
 - `redact`
+- `symbolicate`
+- `correlateTimeline`
+- `createIssuePackage`
+- `runRegression`
+- `submitIssue`
 - `zip`
 
 示例：
@@ -719,7 +883,91 @@ Recipe 步骤类型：
 }
 ```
 
-## 12. 远程协作数据流
+## 12. Issue Package 与证据索引
+
+Issue Package 目录结构：
+
+```text
+issue-packages/
+  yyyyMMdd-HHmmss-deviceAlias-issueTitle/
+    manifest.json
+    device-profile.json
+    build-info.json
+    debug-session.json
+    evidence-index.json
+    agent-summary.md
+    regression-report.json
+    scripts/
+    artifacts/
+    attachments/
+```
+
+规则：
+
+- `manifest.json` 是导入入口，记录版本、schema、生成工具版本和脱敏状态。
+- `debug-session.json` 保存完整 SessionEvent 列表。
+- `evidence-index.json` 只保存证据索引和文件相对路径，不复制大段日志内容。
+- 导出前执行脱敏，导入时显示脱敏状态和缺失文件。
+- 任何 Agent 结论和缺陷摘要都必须引用 evidence id。
+
+## 13. 符号化与反混淆
+
+Java/Kotlin：
+
+- 支持 ProGuard/R8 mapping 文件。
+- 输入为 logcat、crash stack 或 Issue Package 中的堆栈片段。
+- 输出保留原始堆栈、反混淆堆栈、mapping 文件 hash 和匹配包名/版本。
+
+Native：
+
+- 支持 tombstone、addr2line/llvm-symbolizer 适配、so 搜索路径和 build id 匹配。
+- 输出保留原始 backtrace、符号化 backtrace、未匹配帧和符号路径。
+
+Kernel/vendor：
+
+- 支持 vmlinux、System.map、vendor 符号路径配置。
+- 输出必须记录 build fingerprint、kernel version 和符号匹配置信息。
+
+## 14. 外部缺陷系统集成
+
+支持对象：
+
+- Jira
+- 禅道
+- TAPD
+- GitHub Issues
+- GitLab Issues
+
+提交内容：
+
+- 标题、环境、复现步骤、实际结果、期望结果。
+- Issue Package 摘要。
+- 关键证据引用。
+- 可选附件上传。
+
+安全规则：
+
+- 提交前显示预览。
+- API token 使用安全存储。
+- 大附件可配置为仅上传摘要或本地路径说明。
+- 外部系统失败不影响本地 Issue Package 生成。
+
+## 15. 工具自身可观测性
+
+记录内容：
+
+- ADB / fastboot / scrcpy / perfetto 调用耗时、退出码和错误分类。
+- 远程协作信令、连接、断线和权限变化。
+- Provider 连通性、Agent tool 调用链和模型错误。
+- 客户端崩溃日志、前端错误、Rust panic 和性能指标。
+
+导出：
+
+- `observability_export_self_diagnostics` 生成客户端自身诊断包。
+- 默认不包含 API key、token、用户未脱敏日志或问题包正文。
+- 用户可在设置中控制保留时长和日志级别。
+
+## 16. 远程协作数据流
 
 测试端：
 
@@ -745,7 +993,7 @@ Recipe 步骤类型：
 - 开发端不能绕过测试端权限模型。
 - 远程会话断开后 token 失效。
 
-## 13. Agent 工具映射
+## 17. Agent 工具映射
 
 PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表实现，而不是让模型直接执行 shell。
 
@@ -755,6 +1003,12 @@ PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表
 - `device.describe`
 - `logcat.capture`
 - `logcat.search`
+- `timeline.correlate`
+- `session.export`
+- `issuePackage.create`
+- `issuePackage.import`
+- `symbolication.run`
+- `regression.run`
 - `bugreport.capture`
 - `perfetto.capture`
 - `dumpsys.run`
@@ -766,6 +1020,8 @@ PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表
 - `package.list`
 - `package.install`
 - `remote.requestPermission`
+- `integration.submitIssue`
+- `observability.exportSelfDiagnostics`
 
 每个工具必须定义：
 
@@ -777,8 +1033,9 @@ PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表
 - redaction policy
 - audit policy
 - dry-run support
+- evidence output policy
 
-## 14. 错误处理
+## 18. 错误处理
 
 错误码分类：
 
@@ -795,6 +1052,11 @@ PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表
 - `REMOTE_PERMISSION_DENIED`
 - `AGENT_TOOL_DENIED`
 - `SECRET_STORE_FAILED`
+- `ISSUE_PACKAGE_INVALID`
+- `SYMBOLICATION_NO_MATCH`
+- `TIMELINE_CORRELATION_LOW_CONFIDENCE`
+- `INTEGRATION_SUBMIT_FAILED`
+- `SELF_DIAGNOSTICS_EXPORT_FAILED`
 
 错误 UI：
 
@@ -803,9 +1065,9 @@ PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表
 - 提供建议动作。
 - 对可恢复错误提供一键修复。
 
-## 15. 测试策略
+## 19. 测试策略
 
-### 15.1 单元测试
+### 19.1 单元测试
 
 - ADB devices 输出解析。
 - fastboot devices 输出解析。
@@ -815,8 +1077,12 @@ PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表
 - ReplayScript 坐标归一化。
 - Agent tool permission policy。
 - 日志脱敏规则。
+- Debug Session event ordering。
+- EvidenceRef path and range validation。
+- Issue Package manifest schema。
+- Symbolication profile matching。
 
-### 15.2 集成测试
+### 19.2 集成测试
 
 - ADB path 配置和版本检测。
 - 启动/停止 adb server。
@@ -824,15 +1090,21 @@ PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表
 - 串口 mock server。
 - Recipe dry-run。
 - Provider 连通性测试。
+- Issue Package export/import。
+- timeline correlation with synthetic logcat and trace fixtures。
+- external issue integration dry-run。
+- self diagnostics export。
 
-### 15.3 端到端测试
+### 19.3 端到端测试
 
 - 连接设备 -> 打开镜像 -> 打开 shell -> 抓日志。
 - 录制脚本 -> 保存 -> 回放。
 - 创建远程邀请 -> 加入 -> 控制镜像 -> 执行诊断。
 - Chat -> Agent 抓日志 -> 总结异常。
+- Debug Session -> Issue Package 导出 -> 另一客户端导入 -> 查看证据索引。
+- 复现脚本 -> 修复后回归验证 -> 生成验证报告。
 
-### 15.4 人工验收
+### 19.4 人工验收
 
 - Windows 10 / 11。
 - Android 8 到最新版本。
@@ -840,7 +1112,7 @@ PRD 要求 Agent 能使用客户端所有功能。技术上通过工具注册表
 - 普通用户权限和管理员权限。
 - 企业防火墙或杀软场景。
 
-## 16. 构建与发布
+## 20. 构建与发布
 
 MVP 发布策略：
 
@@ -854,34 +1126,46 @@ MVP 发布策略：
 - Tauri updater 可在后续版本接入。
 - 企业内部分发可先使用 GitHub Releases 或内网制品库。
 
-## 17. 风险与对策
+## 21. 风险与对策
 
-### 17.1 scrcpy 嵌入难度
+### 21.1 scrcpy 嵌入难度
 
 风险：把 scrcpy 画面嵌入 React 面板可能涉及窗口句柄、渲染和输入焦点问题。  
 对策：MVP 使用独立 scrcpy 窗口，由客户端管理生命周期和参数；后续再做嵌入式体验。
 
-### 17.2 Agent 执行危险命令
+### 21.2 Agent 执行危险命令
 
 风险：模型误调用破坏性命令。  
 对策：工具注册表、风险等级、审批、审计、dry-run、denylist。
 
-### 17.3 远程协作安全边界
+### 21.3 远程协作安全边界
 
 风险：开发端越权操作测试端电脑。  
 对策：只暴露客户端工具能力，不暴露整机远程桌面；权限由测试端审批。
 
-### 17.4 Android 版本差异
+### 21.4 Android 版本差异
 
 风险：Perfetto、scrcpy 音频、无线调试、bugreport 行为随 Android 版本不同。  
 对策：能力检测 + 版本提示 + fallback。
 
-### 17.5 日志隐私
+### 21.5 日志隐私
 
 风险：诊断包包含敏感信息。  
 对策：脱敏规则、导出预览、按团队策略启用强制脱敏。
 
-## 18. PRD 映射
+### 21.6 符号化匹配不可靠
+
+风险：mapping、so、vmlinux 或 vendor 符号与设备构建不匹配会产生误导性堆栈。
+
+对策：必须记录匹配依据、hash、build fingerprint 和未匹配帧；低置信度结果在 UI 中标注。
+
+### 21.7 外部系统上传敏感信息
+
+风险：Issue Package 附件可能包含隐私或公司敏感信息。
+
+对策：提交前预览、脱敏状态提示、附件上传策略和默认最小化上传。
+
+## 22. PRD 映射
 
 | PRD 需求 | 技术模块 |
 | --- | --- |
@@ -892,11 +1176,17 @@ MVP 发布策略：
 | 局域网远程控制 | Remote Hub, WebRTC, Permission Policy |
 | Cherry Studio 类 Chat / Provider / Agent | AI Hub, Provider Manager, Agent Tool Registry |
 | 一键日志 / trace / 自定义操作 | Diagnostic Hub, DebugRecipe |
+| Debug Session / Issue Package / 证据索引 | Session Hub, Report Hub, EvidenceRef |
+| 符号化与反混淆 | Symbolication Core, Issue Package |
+| 回归验证 | Script Hub, RegressionReport |
+| App Inspection | Package Hub, App Data Inspectors |
+| 外部缺陷系统集成 | Integration Hub |
+| 工具自身可观测性 | Observability Core |
 | ROM / App / QA 增强 | ROM Hub, Package Hub, Lab Hub, Report Hub |
 | 模块化 | feature modules, Rust Core domains |
 | Agent 使用所有功能 | Unified Tool Registry + permission/audit |
 
-## 19. 实施顺序
+## 23. 实施顺序
 
 ### Phase 0：仓库与文档
 
@@ -923,6 +1213,7 @@ MVP 发布策略：
 - 一键 bugreport。
 - 一键 Perfetto。
 - 诊断产物目录。
+- Debug Session 基础事件写入。
 
 ### Phase 4：脚本
 
@@ -930,6 +1221,14 @@ MVP 发布策略：
 - ReplayScript 保存。
 - 基础回放。
 - 失败产物。
+- 回归验证报告。
+
+### Phase 4.5：问题包与证据索引
+
+- Issue Package manifest。
+- evidence-index 生成。
+- 导出/导入。
+- timeline correlation。
 
 ### Phase 5：远程
 
@@ -945,6 +1244,7 @@ MVP 发布策略：
 - Tool Registry。
 - 审批流。
 - 日志总结 Playbook。
+- 证据模式。
 
 ### Phase 7：扩展能力
 
@@ -952,8 +1252,11 @@ MVP 发布策略：
 - ROM Hub。
 - Lab Hub。
 - Report Hub。
+- Symbolication Core。
+- Integration Hub。
+- Observability Core。
 
-## 20. 验收标准
+## 24. 验收标准
 
 技术设计完成后，工程实现应能逐步验证：
 
@@ -963,3 +1266,7 @@ MVP 发布策略：
 - 每个远程操作都能追踪 actor。
 - 每个诊断任务都有产物目录和 metadata。
 - UI 首屏是工具工作台，不是营销页。
+- Debug Session 记录关键用户操作、命令、Agent 调用和诊断任务。
+- Issue Package 可导出、可导入，并能查看证据索引。
+- Agent 关键结论必须引用 EvidenceRef 或明确标记为假设。
+- 回归验证能输出报告并关联失败证据。
