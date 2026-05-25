@@ -409,6 +409,10 @@ fn should_inject_adb_serial(argv: &[String]) -> bool {
         && argv.get(1).map(String::as_str) != Some("devices")
 }
 
+fn is_read_only_tool_command(argv: &[String]) -> bool {
+    argv.first().map(String::as_str) == Some("adb")
+}
+
 fn run_process_with_timeout(argv: &[String], timeout: Duration) -> CommandExecutionResult {
     let start = Instant::now();
     let mut child = match Command::new(&argv[0])
@@ -1122,8 +1126,71 @@ fn list_agent_tools() -> Vec<AgentTool> {
             "list_devices",
         ),
         agent_tool(
+            "device.profile.read",
+            "读取当前设备画像、能力和工具可用性摘要。",
+            "read",
+            "device.read",
+            "list_devices",
+        ),
+        agent_tool(
+            "command.executeReadOnly",
+            "通过命令网关执行只读 ADB 命令，并复用风险分类和审批边界。",
+            "read",
+            "command.execute",
+            "execute_read_only_command",
+        ),
+        agent_tool(
             "logcat.capture",
             "抓取 logcat buffer。",
+            "read",
+            "diagnostic.run",
+            "run_recipe",
+        ),
+        agent_tool(
+            "bugreport.capture",
+            "抓取 bugreport 诊断产物。",
+            "read",
+            "diagnostic.run",
+            "run_recipe",
+        ),
+        agent_tool(
+            "perfetto.capture",
+            "按预设模板抓取 Perfetto trace 产物。",
+            "read",
+            "diagnostic.run",
+            "run_recipe",
+        ),
+        agent_tool(
+            "dumpsys.capture",
+            "抓取指定 dumpsys service 输出。",
+            "read",
+            "diagnostic.run",
+            "run_recipe",
+        ),
+        agent_tool(
+            "artifact.search",
+            "在诊断产物和证据索引中检索关键字。",
+            "read",
+            "artifact.read",
+            "list_artifacts",
+        ),
+        agent_tool(
+            "artifact.summarize",
+            "读取诊断产物摘要和证据卡片。",
+            "read",
+            "artifact.read",
+            "list_artifacts",
+        ),
+        agent_tool(
+            "script.generateDraft",
+            "根据当前证据生成复现脚本草稿预览。",
+            "write",
+            "script.write",
+            "list_scripts",
+        ),
+        agent_tool(
+            "script.runRegression",
+            "运行已批准的复现脚本并生成回归报告产物。",
             "read",
             "diagnostic.run",
             "run_recipe",
@@ -1134,6 +1201,13 @@ fn list_agent_tools() -> Vec<AgentTool> {
             "read",
             "report.export",
             "export_issue_package",
+        ),
+        agent_tool(
+            "issueDraft.create",
+            "基于 Issue Package 生成缺陷描述草稿预览。",
+            "write",
+            "integration.submit",
+            "integration_submit_issue",
         ),
         agent_tool(
             "symbolication.run",
@@ -1227,6 +1301,22 @@ fn slug(value: &str) -> String {
 
 #[tauri::command]
 fn execute_command(command_line: String, device_id: Option<String>) -> CommandExecutionResult {
+    execute_command_with_policy(command_line, device_id, false)
+}
+
+#[tauri::command]
+fn execute_read_only_command(
+    command_line: String,
+    device_id: Option<String>,
+) -> CommandExecutionResult {
+    execute_command_with_policy(command_line, device_id, true)
+}
+
+fn execute_command_with_policy(
+    command_line: String,
+    device_id: Option<String>,
+    read_only: bool,
+) -> CommandExecutionResult {
     let mut argv = split_command_line(&command_line);
     let start = Instant::now();
 
@@ -1244,6 +1334,20 @@ fn execute_command(command_line: String, device_id: Option<String>) -> CommandEx
         };
     }
 
+    if read_only && !is_read_only_tool_command(&argv) {
+        return CommandExecutionResult {
+            command_line,
+            argv,
+            status: "blocked".into(),
+            exit_code: None,
+            stdout: String::new(),
+            stderr: "只读 ADB 命令工具拒绝执行非 ADB 命令。".into(),
+            risk_level: "read".into(),
+            requires_approval: true,
+            duration_ms: start.elapsed().as_millis(),
+        };
+    }
+
     if should_inject_adb_serial(&argv) {
         if let Some(device_id) = device_id.as_deref() {
             argv.splice(1..1, ["-s".into(), resolve_adb_serial(device_id)]);
@@ -1251,6 +1355,20 @@ fn execute_command(command_line: String, device_id: Option<String>) -> CommandEx
     }
 
     let risk_level = classify_command_risk(&argv);
+    if read_only && risk_level != "read" {
+        return CommandExecutionResult {
+            command_line,
+            argv,
+            status: "blocked".into(),
+            exit_code: None,
+            stdout: String::new(),
+            stderr: "只读命令工具拒绝执行非 read 风险命令。".into(),
+            risk_level: risk_level.into(),
+            requires_approval: true,
+            duration_ms: start.elapsed().as_millis(),
+        };
+    }
+
     let requires_approval = risk_level == "dangerous" || risk_level == "destructive";
     if requires_approval {
         return CommandExecutionResult {
@@ -1412,6 +1530,7 @@ pub fn run() {
             run_recipe,
             export_issue_package,
             execute_command,
+            execute_read_only_command,
             start_mirror,
             create_remote_invite,
             symbolication_run,
@@ -1456,5 +1575,23 @@ mod tests {
             .files
             .iter()
             .any(|file| file.path == "screenrecords/current.mp4"));
+    }
+
+    #[test]
+    fn read_only_command_tool_blocks_write_commands() {
+        let result = execute_read_only_command("adb shell input tap 10 10".into(), None);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.risk_level, "write");
+        assert!(result.requires_approval);
+        assert!(result.stderr.contains("只读命令工具"));
+    }
+
+    #[test]
+    fn read_only_command_tool_blocks_non_adb_commands() {
+        let result = execute_read_only_command("powershell Get-ChildItem".into(), None);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.risk_level, "read");
+        assert!(result.requires_approval);
+        assert!(result.stderr.contains("只读 ADB 命令工具"));
     }
 }

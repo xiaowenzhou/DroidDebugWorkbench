@@ -20,6 +20,10 @@
 - 补齐 PRD 自检清单覆盖：
   - 前端 fallback 展示 ADB、fastboot、scrcpy、Perfetto、Tauri 命令网关、安全存储、在线设备数量、最近失败任务、产物目录和敏感信息保护状态。
   - Tauri 后端自检新增 fastboot、真实在线 ADB 设备数量、产物目录可写性、安全存储状态和最近失败任务说明。
+- 补齐技术设计中的 Agent Tool Registry 内置工具元数据：
+  - 前端 fallback 和 Tauri 后端注册表均覆盖 `device.list` 到 `integration.submitIssue` 的 15 个内置工具。
+  - `command.executeReadOnly` 使用专用只读 ADB 后端入口，非 ADB 命令和非 `read` 风险命令都会被拦截，不复用通用执行入口放大权限。
+  - 当前补齐的是工具注册表和安全边界元数据；Provider-backed Agent 自动选工具与真实工具调用仍是后续适配器工作。
 - 新增中文与乱码回归测试，覆盖：
   - 主导航、工作台面板、按钮等关键界面文案。
   - demo 设备、Debug Session、Issue Package、脚本、Agent Tool 描述。
@@ -38,9 +42,13 @@
   - 4 个测试文件通过。
   - 13 个测试用例通过。
   - 覆盖 MVP 屏幕采集 Recipe、真实设备能力解析、fallback 产物路径和后端中文文案。
+- `npm.cmd test -- src\app\__tests__\localizationData.test.ts`
+  - 1 个测试文件通过。
+  - 4 个测试用例通过。
+  - 覆盖 Agent Tool Registry 清单与技术设计对齐，以及只读 ADB 命令工具专用 handler 和非 ADB 拦截声明。
 - `npm.cmd test`
   - 12 个测试文件通过。
-  - 26 个测试用例通过。
+  - 27 个测试用例通过。
 - `npm.cmd run build`
   - TypeScript 编译通过。
   - Vite 生产构建通过。
@@ -51,6 +59,10 @@
   - 阻塞与上一轮记录一致，需要安装 Visual Studio Build Tools C++ 工作负载。
 - `git diff --check`
   - 未发现空白错误。
+- 代码 review：
+  - 首轮发现 `command.executeReadOnly` 对未知本机命令默认 `read` 的风险。
+  - 已收紧为只允许 ADB 命令入口，并继续拦截非 `read` 风险命令。
+  - 复审结论为 `APPROVE`。
 - 本地开发页探测：
   - `http://127.0.0.1:1420` 返回 HTTP 200。
 - 浏览器截图验证：
@@ -87,7 +99,7 @@
 | scrcpy 镜像反控 | UI 与 Tauri 启动入口已实现 | 本机缺少 scrcpy，真实镜像未验证 |
 | 脚本与回放 | 脚本模型、列表、回归报告入口已实现 | 真实录制/回放事件捕获仍需继续实现 |
 | Debug Session / Issue Package | 时间线、证据索引、导出模型已实现；预览模式问题包产物已带 manifest 路径 | 自动测试通过 |
-| Agent | 工具注册表、中文 fallback 输出、审批模型已实现 | 真实 Provider 调用和自动工具调用仍需继续实现 |
+| Agent | 工具注册表元数据已与技术设计 15 个内置工具对齐；只读 ADB 命令工具有专用后端入口；中文 fallback 输出、审批模型已实现 | 元数据与只读边界自动测试通过；真实 Provider 调用和自动工具调用仍需继续实现 |
 | 局域网远程协作 | 邀请码、权限、审计模型与 UI 已实现 | WebRTC 传输和远端控制仍需继续实现 |
 | ROM / 符号化 | Java mapping 符号化预览已实现 | 自动测试通过；native/tombstone 需继续实现 |
 | 外部系统集成 | dry-run payload 预览已实现 | 真实 Jira/禅道/TAPD/GitHub/GitLab 提交需凭据和适配器 |

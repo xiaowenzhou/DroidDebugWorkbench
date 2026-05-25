@@ -4,6 +4,23 @@ import { demoAgentTools, demoArtifacts, demoDevices, demoReplayScripts, demoSess
 import { workbenchApi } from '../api';
 
 const mojibakePattern = /缁撹|璁惧|鎶撳|鍚庣|鐧诲|宕╂簝|闀滃|鑴氭|浼氳|杩滅|璁剧|涓€閿|鏃ュ織|鍛戒护|娴忚|缂洪/;
+const expectedAgentToolNames = [
+  'device.list',
+  'device.profile.read',
+  'command.executeReadOnly',
+  'logcat.capture',
+  'bugreport.capture',
+  'perfetto.capture',
+  'dumpsys.capture',
+  'artifact.search',
+  'artifact.summarize',
+  'script.generateDraft',
+  'script.runRegression',
+  'issuePackage.create',
+  'issueDraft.create',
+  'symbolication.run',
+  'integration.submitIssue',
+];
 
 describe('localized workbench data', () => {
   it('keeps demo data readable for the Chinese desktop client', () => {
@@ -77,5 +94,23 @@ describe('localized workbench data', () => {
     ]) {
       expect(backendSource).not.toContain(oldEnglish);
     }
+  });
+
+  it('keeps Agent Tool Registry metadata aligned with the technical design', () => {
+    const backendSource = readFileSync(new URL('../../../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+    const frontendToolNames = demoAgentTools.map((tool) => tool.name);
+
+    expect(frontendToolNames).toEqual(expect.arrayContaining(expectedAgentToolNames));
+    for (const toolName of expectedAgentToolNames) {
+      expect(backendSource).toContain(toolName);
+    }
+
+    const readOnlyCommandTool = demoAgentTools.find((tool) => tool.name === 'command.executeReadOnly');
+    expect(readOnlyCommandTool).toMatchObject({
+      riskLevel: 'read',
+      handler: 'execute_read_only_command',
+    });
+    expect(backendSource).toContain('fn execute_read_only_command');
+    expect(backendSource).toContain('只读 ADB 命令工具拒绝执行非 ADB 命令');
   });
 });
