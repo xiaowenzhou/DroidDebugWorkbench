@@ -20,6 +20,8 @@ describe('debug recipes', () => {
         'collect-logcat',
         'collect-bugreport',
         'collect-perfetto-trace',
+        'collect-screenshot',
+        'collect-screenrecord',
         'collect-issue-package',
         'collect-regression-report',
       ]),
@@ -40,6 +42,16 @@ describe('debug recipes', () => {
     ).toEqual({
       allowed: false,
       missingCapabilities: ['perfetto'],
+    });
+
+    expect(
+      isRecipeAllowedForDevice(BUILTIN_RECIPES.find((recipe) => recipe.id === 'collect-screenrecord')!, {
+        ...device,
+        capabilities: ['adb', 'screenshot'],
+      }),
+    ).toEqual({
+      allowed: false,
+      missingCapabilities: ['screenrecord'],
     });
   });
 });

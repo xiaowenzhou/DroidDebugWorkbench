@@ -56,6 +56,14 @@ describe('workbench browser-mode workflows', () => {
     expect(artifact.summary).toContain('证据索引');
   });
 
+  it('returns MVP screen capture recipe artifacts in fallback mode', async () => {
+    const screenshot = await workbenchApi.runRecipe('collect-screenshot', 'demo-adb-001');
+    expect(screenshot.files.map((file) => file.path)).toEqual(expect.arrayContaining(['screenshots/current.png']));
+
+    const screenrecord = await workbenchApi.runRecipe('collect-screenrecord', 'demo-adb-001');
+    expect(screenrecord.files.map((file) => file.path)).toEqual(expect.arrayContaining(['screenrecords/current.mp4']));
+  });
+
   it('reports the PRD self-diagnostics checklist in fallback mode', async () => {
     const diagnostics = await workbenchApi.getSelfDiagnostics();
     const joined = diagnostics.join('\n');

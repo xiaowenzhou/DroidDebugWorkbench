@@ -55,6 +55,10 @@ describe('localized workbench data', () => {
     const backendSource = readFileSync(new URL('../../../src-tauri/src/lib.rs', import.meta.url), 'utf8');
 
     expect(backendSource).toContain('一键 Logcat');
+    expect(backendSource).toContain('一键截图');
+    expect(backendSource).toContain('一键录屏');
+    expect(backendSource).toContain('collect-screenshot');
+    expect(backendSource).toContain('collect-screenrecord');
     expect(backendSource).toContain('自检');
     expect(backendSource).toContain('本地明确确认');
     expect(backendSource).toContain('fastboot 可用');

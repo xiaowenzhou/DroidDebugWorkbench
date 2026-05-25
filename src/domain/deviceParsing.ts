@@ -31,7 +31,7 @@ function parseAdbDeviceLine(line: string, timestamp: string): DeviceRef {
   const state = normalizeAdbState(stateToken);
   const detailMap = parseDetails(details);
   const transport = inferAdbTransport(serial);
-  const capabilities = state === 'device' ? ['adb', 'logcat', 'bugreport', 'dumpsys', 'screenshot'] : ['adb'];
+  const capabilities = state === 'device' ? ['adb', 'logcat', 'bugreport', 'dumpsys', 'screenshot', 'screenrecord'] : ['adb'];
 
   return {
     id: `${transport}-${serial}`,

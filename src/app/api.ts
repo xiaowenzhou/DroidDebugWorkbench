@@ -73,7 +73,11 @@ function fallbackRecipeFiles(recipeId: string): ArtifactFile[] {
   }
 
   if (recipeId.includes('screenshot') || recipeId.includes('crash') || recipeId === 'collect-issue-package') {
-    files.push(artifactFile('screenshots/current.txt', 'screenshot', 128));
+    files.push(artifactFile('screenshots/current.png', 'screenshot', 128));
+  }
+
+  if (recipeId.includes('screenrecord')) {
+    files.push(artifactFile('screenrecords/current.mp4', 'screenrecord', 128));
   }
 
   if (recipeId === 'collect-issue-package') {

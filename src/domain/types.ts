@@ -130,7 +130,7 @@ export interface DebugRecipe {
   id: string;
   name: string;
   description?: string;
-  category: 'log' | 'trace' | 'crash' | 'anr' | 'performance' | 'power' | 'graphics' | 'custom';
+  category: 'log' | 'trace' | 'screen' | 'crash' | 'anr' | 'performance' | 'power' | 'graphics' | 'custom';
   requiredCapabilities: string[];
   riskLevel: RiskLevel;
   inputs: RecipeInput[];

@@ -15,7 +15,7 @@ ABC999	unauthorized
         transport: 'adb-usb',
         state: 'device',
         model: 'Pixel 8 Pro',
-        capabilities: expect.arrayContaining(['adb', 'logcat', 'bugreport']),
+        capabilities: expect.arrayContaining(['adb', 'logcat', 'bugreport', 'screenshot', 'screenrecord']),
       },
       {
         serial: '192.168.1.20:5555',

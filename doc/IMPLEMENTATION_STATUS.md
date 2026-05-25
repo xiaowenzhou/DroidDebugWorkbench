@@ -13,6 +13,10 @@
 - 补齐预览模式诊断产物契约：
   - Recipe fallback 产物现在包含 `metadata.json`、`evidence-index.json`、时间线和按 Recipe 类型生成的产物路径。
   - `collect-issue-package` 预览产物包含 `issue-package/manifest.json`，便于会话和问题包流程展示同一证据链。
+- 补齐技术设计中 MVP 内置屏幕采集 Recipe：
+  - 前端领域模型和 Tauri 后端均新增 `collect-screenshot` / `collect-screenrecord`。
+  - 浏览器 fallback 和 Tauri 后端均能返回截图、录屏占位产物路径，并继续写入 metadata / evidence-index。
+  - demo 设备和真实 ADB 设备解析均暴露 `screenrecord` 能力，避免 UI 中新 Recipe 只在演示设备可用。
 - 补齐 PRD 自检清单覆盖：
   - 前端 fallback 展示 ADB、fastboot、scrcpy、Perfetto、Tauri 命令网关、安全存储、在线设备数量、最近失败任务、产物目录和敏感信息保护状态。
   - Tauri 后端自检新增 fastboot、真实在线 ADB 设备数量、产物目录可写性、安全存储状态和最近失败任务说明。
@@ -30,9 +34,13 @@
   - 3 个测试文件通过。
   - 11 个测试用例通过。
   - 覆盖共享命令解析、fallback 风险分类、诊断产物 metadata / evidence-index、自检清单和后端中文文案。
+- `npm.cmd test -- src\domain\__tests__\recipes.test.ts src\domain\__tests__\deviceParsing.test.ts src\app\__tests__\workflowSmoke.test.ts src\app\__tests__\localizationData.test.ts`
+  - 4 个测试文件通过。
+  - 13 个测试用例通过。
+  - 覆盖 MVP 屏幕采集 Recipe、真实设备能力解析、fallback 产物路径和后端中文文案。
 - `npm.cmd test`
   - 12 个测试文件通过。
-  - 25 个测试用例通过。
+  - 26 个测试用例通过。
 - `npm.cmd run build`
   - TypeScript 编译通过。
   - Vite 生产构建通过。
@@ -75,7 +83,7 @@
 | 明亮中文 UI | 已实现 | 自动测试、生产构建、截图通过 |
 | 设备工作台 | UI 与 demo/fallback 完成，Tauri 可探测 adb/fastboot | 本机无在线设备，真机未验证 |
 | 终端命令 | 风险分类、审批拦截、浏览器 fallback、Tauri 执行入口已实现；fallback 已复用共享解析和风险分类 | 自动测试通过；真实 adb shell 需在线设备 |
-| 诊断 Recipe | logcat/bugreport/dumpsys/trace 产物目录和安全占位已实现；fallback 产物包含 metadata、evidence-index 和时间线 | 自动测试通过；真实采集需设备和工具 |
+| 诊断 Recipe | logcat/bugreport/dumpsys/trace/截图/录屏 产物目录和安全占位已实现；fallback 产物包含 metadata、evidence-index 和时间线 | 自动测试通过；真实采集需设备和工具 |
 | scrcpy 镜像反控 | UI 与 Tauri 启动入口已实现 | 本机缺少 scrcpy，真实镜像未验证 |
 | 脚本与回放 | 脚本模型、列表、回归报告入口已实现 | 真实录制/回放事件捕获仍需继续实现 |
 | Debug Session / Issue Package | 时间线、证据索引、导出模型已实现；预览模式问题包产物已带 manifest 路径 | 自动测试通过 |

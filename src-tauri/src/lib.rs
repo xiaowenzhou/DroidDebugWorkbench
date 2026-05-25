@@ -579,6 +579,7 @@ fn demo_profile() -> DeviceCapabilityProfile {
             "adb": tool_exists("adb"),
             "scrcpy": tool_exists("scrcpy"),
             "perfetto": tool_exists("perfetto"),
+            "screenrecord": true,
             "fastboot": tool_exists("fastboot")
         }),
         scrcpy: ScrcpyProfile {
@@ -681,6 +682,7 @@ fn list_devices() -> Vec<DeviceRef> {
             "perfetto".into(),
             "dumpsys".into(),
             "screenshot".into(),
+            "screenrecord".into(),
             "scrcpy".into(),
         ],
         profile: Some(demo_profile()),
@@ -722,6 +724,7 @@ fn parse_adb_device_line(line: &str) -> DeviceRef {
             "bugreport",
             "dumpsys",
             "screenshot",
+            "screenrecord",
             "scrcpy",
         ]
     } else {
@@ -821,6 +824,32 @@ fn list_recipes() -> Vec<Recipe> {
                 "perfetto",
                 "抓取 Perfetto trace",
                 Some("traces/main.perfetto-trace"),
+            )],
+            output_policy.clone(),
+        ),
+        recipe(
+            "collect-screenshot",
+            "一键截图",
+            "screen",
+            vec!["screenshot"],
+            vec![step(
+                "screenshot-current",
+                "captureScreenshot",
+                "截取当前画面",
+                Some("screenshots/current.png"),
+            )],
+            output_policy.clone(),
+        ),
+        recipe(
+            "collect-screenrecord",
+            "一键录屏",
+            "screen",
+            vec!["screenrecord"],
+            vec![step(
+                "screenrecord-current",
+                "recordScreen",
+                "录制当前画面",
+                Some("screenrecords/current.mp4"),
             )],
             output_policy.clone(),
         ),
@@ -1014,12 +1043,23 @@ fn run_recipe(recipe_id: String, device_id: String) -> DiagnosticArtifact {
 
     if matches!(
         recipe_id.as_str(),
-        "collect-crash-package" | "collect-issue-package" | "collect-regression-report"
+        "collect-screenshot"
+            | "collect-crash-package"
+            | "collect-issue-package"
+            | "collect-regression-report"
     ) {
         files.push(write_artifact_file(
             &root,
-            "screenshots/current.txt",
+            "screenshots/current.png",
             "截图抓取占位文件：设备在线时桌面运行时会替换为 adb exec-out screencap 输出。\n",
+        ));
+    }
+
+    if recipe_id == "collect-screenrecord" {
+        files.push(write_artifact_file(
+            &root,
+            "screenrecords/current.mp4",
+            "录屏抓取占位文件：设备在线时桌面运行时会替换为 adb shell screenrecord 输出。\n",
         ));
     }
 
@@ -1401,5 +1441,20 @@ mod tests {
         assert_eq!(artifact.device_id, "device-1");
         assert_eq!(artifact.recipe_id, "collect-logcat");
         assert_eq!(artifact.status, "success");
+    }
+
+    #[test]
+    fn screen_capture_recipes_return_declared_artifact_paths() {
+        let screenshot = run_recipe("collect-screenshot".into(), "device-1".into());
+        assert!(screenshot
+            .files
+            .iter()
+            .any(|file| file.path == "screenshots/current.png"));
+
+        let screenrecord = run_recipe("collect-screenrecord".into(), "device-1".into());
+        assert!(screenrecord
+            .files
+            .iter()
+            .any(|file| file.path == "screenrecords/current.mp4"));
     }
 }
