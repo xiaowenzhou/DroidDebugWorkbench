@@ -1,0 +1,129 @@
+import {
+  demoAgentTools,
+  demoArtifacts,
+  demoDevices,
+  demoIssuePackage,
+  demoRecipes,
+  demoReplayScripts,
+  demoSession,
+} from './fixtures';
+import type {
+  AgentTool,
+  CommandExecutionResult,
+  DebugRecipe,
+  DebugSession,
+  DeviceRef,
+  DiagnosticArtifact,
+  IntegrationSubmissionResult,
+  IssuePackage,
+  MirrorSession,
+  RemoteInvite,
+  ReplayScript,
+  SymbolicationResult,
+} from '../domain';
+
+type InvokeFn = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+
+async function getTauriInvoke(): Promise<InvokeFn | null> {
+  if (!('__TAURI_INTERNALS__' in window)) {
+    return null;
+  }
+
+  const core = await import('@tauri-apps/api/core');
+  return core.invoke as InvokeFn;
+}
+
+async function callBackend<T>(command: string, args: Record<string, unknown> | undefined, fallback: () => T): Promise<T> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) {
+    return fallback();
+  }
+
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    console.warn(`Falling back after backend command failed: ${command}`, error);
+    return fallback();
+  }
+}
+
+export const workbenchApi = {
+  listDevices: () => callBackend<DeviceRef[]>('list_devices', undefined, () => demoDevices),
+  listRecipes: () => callBackend<DebugRecipe[]>('list_recipes', undefined, () => demoRecipes),
+  listAgentTools: () => callBackend<AgentTool[]>('list_agent_tools', undefined, () => demoAgentTools),
+  listScripts: () => callBackend<ReplayScript[]>('list_scripts', undefined, () => demoReplayScripts),
+  currentSession: () => callBackend<DebugSession>('current_session', undefined, () => demoSession),
+  listArtifacts: () => callBackend<DiagnosticArtifact[]>('list_artifacts', undefined, () => demoArtifacts),
+  exportIssuePackage: (title: string) => callBackend<IssuePackage>('export_issue_package', { title }, () => ({ ...demoIssuePackage, title })),
+  runRecipe: (recipeId: string, deviceId: string) =>
+    callBackend<DiagnosticArtifact>('run_recipe', { recipeId, deviceId }, () => ({
+      ...demoArtifacts[0],
+      id: `artifact-${recipeId}-${Date.now()}`,
+      recipeId,
+      deviceId,
+      createdAt: new Date().toISOString(),
+      status: 'success',
+    })),
+  runAgentPrompt: (prompt: string) =>
+    callBackend<string>('run_agent_prompt', { prompt }, () =>
+      [
+        '结论：当前演示会话显示 LoginActivity 在提交凭据后出现崩溃。',
+        '证据：ev-log-001 指向 logcat/crash.txt 的 FATAL EXCEPTION；ev-cmd-001 指向触发 Activity 的命令输出。',
+        '已执行动作：读取设备状态、关联 Debug Session 时间线、生成 Issue Package 摘要。',
+        `用户问题：${prompt}`,
+      ].join('\n'),
+    ),
+  executeCommand: (commandLine: string, deviceId?: string) =>
+    callBackend<CommandExecutionResult>('execute_command', { commandLine, deviceId }, () => {
+      const argv = commandLine.trim().split(/\s+/).filter(Boolean);
+      const requiresApproval = /\b(flash|wipe|erase|pm\s+clear|uninstall)\b/i.test(commandLine);
+      return {
+        commandLine,
+        argv,
+        status: requiresApproval ? 'blocked' : 'success',
+        exitCode: requiresApproval ? undefined : 0,
+        stdout: requiresApproval ? '' : `Browser fallback queued command through the Command Gateway:\n${commandLine}`,
+        stderr: requiresApproval ? 'Command requires explicit local approval before execution.' : '',
+        riskLevel: requiresApproval ? 'destructive' : 'read',
+        requiresApproval,
+        durationMs: 0,
+      };
+    }),
+  startMirror: (deviceId: string) =>
+    callBackend<MirrorSession>('start_mirror', { deviceId }, () => ({
+      id: `mirror-${Date.now()}`,
+      deviceId,
+      status: 'running',
+      message: 'Browser fallback mirror preview is active. Desktop runtime starts scrcpy when available.',
+      startedAt: new Date().toISOString(),
+    })),
+  createRemoteInvite: (permission: string) =>
+    callBackend<RemoteInvite>('create_remote_invite', { permission }, () => ({
+      code: '428-119',
+      permission,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      lanCandidates: ['local-fallback'],
+      auditEnabled: true,
+    })),
+  runSymbolication: (stack: string, mapping: string) =>
+    callBackend<SymbolicationResult>('symbolication_run', { stack, mapping }, () => ({
+      status: 'partial',
+      inputFrames: stack.split('\n').filter((line) => line.trim().startsWith('at ')).length,
+      matchedFrames: mapping ? 1 : 0,
+      output: mapping ? stack.replace('a.a', 'com.example.LoginActivity.submit') : stack,
+    })),
+  submitIssue: (tracker: string, title: string) =>
+    callBackend<IntegrationSubmissionResult>('integration_submit_issue', { tracker, title }, () => ({
+      tracker,
+      status: 'dry-run',
+      title,
+      payloadPreview: `Dry-run issue payload for ${tracker}: ${title}`,
+      attachments: ['artifact-crash-package'],
+    })),
+  getSelfDiagnostics: () =>
+    callBackend<string[]>('self_diagnostics', undefined, () => [
+      'Frontend fallback adapter active',
+      'ADB path not verified in browser mode',
+      'scrcpy sidecar managed by Tauri when desktop runtime is available',
+    ]),
+};

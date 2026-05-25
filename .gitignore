@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+src-tauri/target/
+.vite/
+.idea/
+.vscode/
+*.log
+vite-dev*.log
+artifacts/
+issue-packages/
+.env
+.env.*
+!.env.example
